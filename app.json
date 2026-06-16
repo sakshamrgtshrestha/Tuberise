@@ -1,29 +1,56 @@
 {
   "expo": {
-    "name": "Tuberise",
-    "slug": "Tuberise",
+    "name": "TubeRise",
+    "slug": "tuberise",
+    "scheme": "tuberise",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tuberise.app"
     },
     "android": {
+      "ndkVersion": "26.1.10909125",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#E53935"
       },
-      "edgeToEdgeEnabled": true
+      "package": "com.tuberise.app",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "tuberise"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-web-browser",
+      "@react-native-google-signin/google-signin"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "2cb8c373-313b-4039-882a-f4ed1b45bfa2"
+      }
     }
   }
 }
