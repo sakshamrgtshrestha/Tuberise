@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCoins } from '../context/CoinContext';
 import { useAuth } from '../context/AuthContext';
 import { getActiveCampaignsForFeed } from '../services/campaignService';
+import { getCompletedCampaignIds } from '../services/completedTasksService';
 import SidebarDrawer from '../components/SidebarDrawer';
 
 const { width: SW } = Dimensions.get('window');
@@ -41,7 +42,8 @@ export default function HomeScreen({ navigation }) {
         }
         console.log('DEBUG: Fetching campaigns for:', user.email);
         try {
-          const campaigns = await getActiveCampaignsForFeed(user.email);
+          const completedIds = await getCompletedCampaignIds(user.email);
+          const campaigns = await getActiveCampaignsForFeed(user.email, completedIds);
           console.log('DEBUG: Total campaigns fetched:', campaigns.length);
           console.log('DEBUG: Campaign data:', JSON.stringify(campaigns));
           // For HomeScreen, we only show 'watch' type tasks

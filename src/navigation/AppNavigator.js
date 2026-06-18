@@ -38,6 +38,9 @@ import TaskDetailScreen      from '../screens/TaskDetailScreen';
 import CampaignCreationScreen from '../screens/CampaignCreationScreen';
 import CampaignDetailScreen  from '../screens/CampaignDetailScreen';
 import ProfileScreen         from '../screens/ProfileScreen';
+import HowToUseScreen        from '../screens/HowToUseScreen';
+import PrivacyPolicyScreen   from '../screens/PrivacyPolicyScreen';
+import BuyCoinsScreen        from '../screens/BuyCoinsScreen';
 
 // ── Admin Screens ─────────────────────────────────────────────────────────────
 import AdminScreen from '../screens/AdminScreen';
@@ -160,6 +163,9 @@ function UserStack() {
       <Stack.Screen name="CampaignCreation" component={CampaignCreationScreen} />
       <Stack.Screen name="CampaignDetail"   component={CampaignDetailScreen} />
       <Stack.Screen name="Profile"          component={ProfileScreen} />
+      <Stack.Screen name="HowToUse"         component={HowToUseScreen} />
+      <Stack.Screen name="PrivacyPolicy"    component={PrivacyPolicyScreen} />
+      <Stack.Screen name="BuyCoins"         component={BuyCoinsScreen} />
     </Stack.Navigator>
   );
 }

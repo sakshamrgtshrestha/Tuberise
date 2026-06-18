@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCoins } from '../context/CoinContext';
 import { useAuth } from '../context/AuthContext';
 import { getActiveCampaignsForFeed } from '../services/campaignService';
-import { hasCompletedTask } from '../services/completedTasksService';
+import { getCompletedCampaignIds } from '../services/completedTasksService';
 import SidebarDrawer from '../components/SidebarDrawer';
 
 const { width: SW } = Dimensions.get('window');
@@ -41,14 +41,10 @@ export default function LikeScreen({ navigation }) {
       (async () => {
         if (!user?.email) return;
         try {
-          const campaigns = await getActiveCampaignsForFeed(user.email);
+          const completedIds = await getCompletedCampaignIds(user.email);
+          const campaigns = await getActiveCampaignsForFeed(user.email, completedIds);
           const all = campaigns.filter(c => c.type === 'like');
-          const valid = [];
-          for (const t of all) {
-            const done = await hasCompletedTask('currentUser', t.videoId, 'liked');
-            if (!done) valid.push(t);
-          }
-          if (active) { setTasks(valid); setIdx(0); }
+          if (active) { setTasks(all); setIdx(0); }
         } catch (error) {
           console.error("Failed to load campaigns:", error);
         }

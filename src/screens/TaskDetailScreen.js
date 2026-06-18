@@ -5,7 +5,8 @@ import YouTubeWebView from '../components/YouTubeWebView';
 import { useCoins } from '../context/CoinContext';
 import { updateCampaignProgress } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
-import { markTaskCompleted } from '../services/completedTasksService';
+import { markTaskCompleted, hasCompletedTimer } from '../services/completedTasksService';
+import { useEffect } from 'react';
 
 // Map task type → correct tab name defined in AppNavigator.js
 const TASK_TAB_MAP = {
@@ -22,19 +23,21 @@ export default function TaskDetailScreen({ route, navigation }) {
   
   const [currentIndex, setCurrentIndex] = useState(0);
   const [verifying, setVerifying] = useState(false);
+  const [reducedTimer, setReducedTimer] = useState(false);
+
+  useEffect(() => {
+    if (!user?.email || !task?.id) return;
+    hasCompletedTimer(user.email, task.id).then(done => {
+      setReducedTimer(done);
+    });
+  }, [task?.id, user?.email]);
 
   const grantRewards = async () => {
     await addCoins(task.coinsReward, `${taskType} reward`);
     try {
       await updateCampaignProgress(task.id);
       
-      const targetId = taskType === 'subscribe'
-        ? (task.channelId || task.channelName)
-        : task.videoId;
-      const action = taskType === 'subscribe' ? 'subscribed'
-        : taskType === 'like' ? 'liked'
-        : taskType;
-      await markTaskCompleted('currentUser', targetId, action);
+      await markTaskCompleted(user.email, task.id, taskType);
     } catch (error) {
       console.error("Failed to update campaign progress:", error);
     }
@@ -52,6 +55,7 @@ export default function TaskDetailScreen({ route, navigation }) {
     if (taskType === 'watch') {
       await addCoins(task.coinsReward, `${taskType} reward`);
       await updateCampaignProgress(task.id);
+      await markTaskCompleted(user.email, task.id, taskType);
       navigation.navigate('MainTabs', { screen: targetTab });
       return;
     }
@@ -72,13 +76,7 @@ export default function TaskDetailScreen({ route, navigation }) {
       await addCoins(task.coinsReward, `${taskType} reward`);
       await updateCampaignProgress(task.id);
       
-      const targetId = taskType === 'subscribe'
-        ? (task.channelId || task.channelName)
-        : task.videoId;
-      const action = taskType === 'subscribe' ? 'subscribed'
-        : taskType === 'like' ? 'liked'
-        : taskType;
-      await markTaskCompleted('currentUser', targetId, action);
+      await markTaskCompleted(user.email, task.id, taskType);
       
       navigation.navigate('MainTabs', { screen: targetTab });
     } catch(e) {
@@ -104,9 +102,10 @@ export default function TaskDetailScreen({ route, navigation }) {
         actionType={taskType}
         onReturnToApp={handleReturnToApp}
         onAutoAdvance={handleAutoAdvance}
-        allTasks={[task]} // Just passing the current one for now to avoid mockData
         taskIndex={0}
         initialAutoPlay={initialAutoPlay}
+        userEmail={user?.email}
+        reducedTimer={reducedTimer}
       />
       {verifying && (
         <View style={styles.verifyingOverlay}>

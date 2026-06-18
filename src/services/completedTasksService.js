@@ -1,43 +1,81 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { db } from '../config/firebase';
+import { 
+  doc, setDoc, getDoc, collection, 
+  query, where, getDocs 
+} from 'firebase/firestore';
 
-export const markTaskCompleted = async (userId, targetId, action) => {
-  if (!userId || !targetId || !action) return;
+const COMPLETED_COLLECTION = 'completedTasks';
+
+// Mark a campaign as completed by a user
+export const markTaskCompleted = async (userEmail, campaignId, action) => {
+  if (!userEmail || !campaignId || !action) return;
   try {
-    const key = `completedTasks_${userId}`;
-    const data = await AsyncStorage.getItem(key);
-    const tasks = data ? JSON.parse(data) : [];
-    
-    // Check if it already exists
-    if (!tasks.some(t => t.videoId === targetId && t.action === action)) {
-      tasks.push({ videoId: targetId, action, completedAt: Date.now() });
-      await AsyncStorage.setItem(key, JSON.stringify(tasks));
-    }
+    const docId = `${userEmail}_${campaignId}_${action}`;
+    const ref = doc(db, COMPLETED_COLLECTION, docId);
+    await setDoc(ref, {
+      userEmail,
+      campaignId,
+      action,
+      completedAt: new Date(),
+    }, { merge: true });
   } catch (error) {
-    // Ignore error silently to prevent UI toasts
+    console.error('markTaskCompleted error:', error);
   }
 };
 
-export const hasCompletedTask = async (userId, targetId, action) => {
-  if (!userId || !targetId || !action) return false;
+// Check if user already completed a specific campaign+action
+export const hasCompletedTask = async (userEmail, campaignId, action) => {
+  if (!userEmail || !campaignId || !action) return false;
   try {
-    const key = `completedTasks_${userId}`;
-    const data = await AsyncStorage.getItem(key);
-    if (!data) return false;
-    
-    const tasks = JSON.parse(data);
-    return tasks.some(t => t.videoId === targetId && t.action === action);
+    const docId = `${userEmail}_${campaignId}_${action}`;
+    const ref = doc(db, COMPLETED_COLLECTION, docId);
+    const snap = await getDoc(ref);
+    return snap.exists();
   } catch (error) {
     return false;
   }
 };
 
-export const getCompletedTasks = async (userId) => {
-  if (!userId) return [];
+// Get all campaign IDs completed by a user
+export const getCompletedCampaignIds = async (userEmail) => {
+  if (!userEmail) return [];
   try {
-    const key = `completedTasks_${userId}`;
-    const data = await AsyncStorage.getItem(key);
-    return data ? JSON.parse(data) : [];
+    const q = query(
+      collection(db, COMPLETED_COLLECTION),
+      where('userEmail', '==', userEmail)
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => d.data().campaignId);
   } catch (error) {
     return [];
+  }
+};
+
+// Save that user completed the timer for a campaign
+export const markTimerCompleted = async (userEmail, campaignId) => {
+  if (!userEmail || !campaignId) return;
+  try {
+    const docId = `timer_${userEmail}_${campaignId}`;
+    const ref = doc(db, 'timerMemory', docId);
+    await setDoc(ref, {
+      userEmail,
+      campaignId,
+      timerCompletedAt: new Date(),
+    }, { merge: true });
+  } catch (e) {
+    console.error('markTimerCompleted error:', e);
+  }
+};
+
+// Check if user already completed timer for this campaign
+export const hasCompletedTimer = async (userEmail, campaignId) => {
+  if (!userEmail || !campaignId) return false;
+  try {
+    const docId = `timer_${userEmail}_${campaignId}`;
+    const ref = doc(db, 'timerMemory', docId);
+    const snap = await getDoc(ref);
+    return snap.exists();
+  } catch (e) {
+    return false;
   }
 };

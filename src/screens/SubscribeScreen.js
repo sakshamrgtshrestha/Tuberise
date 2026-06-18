@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, StatusBar,
   Switch, Image, Dimensions, ScrollView
@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCoins } from '../context/CoinContext';
 import { useAuth } from '../context/AuthContext';
 import { getActiveCampaignsForFeed } from '../services/campaignService';
-import { hasCompletedTask } from '../services/completedTasksService';
+import { getCompletedCampaignIds } from '../services/completedTasksService';
 import SidebarDrawer from '../components/SidebarDrawer';
 
 const { width: SW } = Dimensions.get('window');
@@ -25,6 +25,8 @@ const VIDEO_H = SCREEN_H * 0.45;
 const thumbUrl = (id) => `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
 const CURRENT_USER_ID = 'user_001';
 
+
+
 export default function SubscribeScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { coinBalance } = useCoins();
@@ -33,6 +35,7 @@ export default function SubscribeScreen({ navigation }) {
   const [autoPlay, setAutoPlay] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [channelPhoto, setChannelPhoto] = useState(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -40,14 +43,10 @@ export default function SubscribeScreen({ navigation }) {
       (async () => {
         if (!user?.email) return;
         try {
-          const campaigns = await getActiveCampaignsForFeed(user.email);
+          const completedIds = await getCompletedCampaignIds(user.email);
+          const campaigns = await getActiveCampaignsForFeed(user.email, completedIds);
           const all = campaigns.filter(c => c.type === 'subscribe');
-          const valid = [];
-          for (const t of all) {
-            const done = await hasCompletedTask('currentUser', t.channelId || t.channelName, 'subscribed');
-            if (!done) valid.push(t);
-          }
-          if (active) { setTasks(valid); setIdx(0); }
+          if (active) { setTasks(all); setIdx(0); }
         } catch (error) {
           console.error("Failed to load campaigns:", error);
         }
@@ -57,7 +56,36 @@ export default function SubscribeScreen({ navigation }) {
   );
 
   const task = tasks[idx % Math.max(tasks.length, 1)];
-  const handleSeeAnother = () => setIdx((i) => i + 1);
+  
+  // When tasks load or idx changes, fetch channel photo
+  useEffect(() => {
+    const currentTask = tasks[idx % Math.max(tasks.length, 1)];
+    if (!currentTask?.videoId) return;
+    
+    setChannelPhoto(null); // reset while loading
+    
+    const YOUTUBE_API_KEY = 'AIzaSyDSA7JUtKvAsOJ8rWLozvI2HISw8T3lA7o';
+    
+    fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${currentTask.videoId}&key=${YOUTUBE_API_KEY}`)
+      .then(r => r.json())
+      .then(data => {
+        const channelId = data.items?.[0]?.snippet?.channelId;
+        if (!channelId) return;
+        return fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet&id=${channelId}&key=${YOUTUBE_API_KEY}`);
+      })
+      .then(r => r?.json())
+      .then(chData => {
+        const url = chData?.items?.[0]?.snippet?.thumbnails?.medium?.url;
+        if (url) setChannelPhoto(url);
+      })
+      .catch(e => console.log('Channel photo error:', e));
+      
+  }, [tasks, idx]);
+
+  const handleSeeAnother = () => {
+    setChannelPhoto(null);
+    setIdx((i) => i + 1);
+  };
   const handleSubscribe = () => navigation.navigate('TaskDetail', { task, taskType: 'subscribe', autoPlay });
 
   return (
@@ -94,9 +122,13 @@ export default function SubscribeScreen({ navigation }) {
             <View style={s.channelOverlay} />
             <View style={s.channelContent}>
               <View style={s.avatarRing}>
-                <View style={s.avatar}>
-                  <Text style={s.avatarTxt}>{task.channelName?.charAt(0)?.toUpperCase() ?? 'C'}</Text>
-                </View>
+                {channelPhoto ? (
+                  <Image source={{ uri: channelPhoto }} style={s.avatarImg} />
+                ) : (
+                  <View style={s.avatar}>
+                    <Text style={s.avatarTxt}>{task.channelName?.charAt(0)?.toUpperCase() ?? 'C'}</Text>
+                  </View>
+                )}
               </View>
               <Text style={s.channelName}>{task.channelName}</Text>
               <Text style={s.channelSub}>{task.viewCount}</Text>
@@ -155,6 +187,7 @@ const s = StyleSheet.create({
   channelContent: { alignItems: 'center', zIndex: 1 },
   avatarRing: { width: 90, height: 90, borderRadius: 45, borderWidth: 3, borderColor: '#FFF', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   avatar: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#3366FF', alignItems: 'center', justifyContent: 'center' },
+  avatarImg: { width: 80, height: 80, borderRadius: 40 },
   avatarTxt: { fontSize: 36, fontWeight: '800', color: '#FFF' },
   channelName: { fontSize: 20, fontWeight: '800', color: '#FFF', marginBottom: 4 },
   channelSub: { fontSize: 13, color: 'rgba(255,255,255,0.75)' },

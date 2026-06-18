@@ -92,7 +92,7 @@ export const deleteCampaign = async (campaignId) => {
   }
 };
 
-export const getActiveCampaignsForFeed = async (currentUserEmail) => {
+export const getActiveCampaignsForFeed = async (currentUserEmail, completedCampaignIds = []) => {
   try {
     const campaignsQuery = query(
       collection(db, CAMPAIGNS_COLLECTION),
@@ -103,8 +103,8 @@ export const getActiveCampaignsForFeed = async (currentUserEmail) => {
     const campaigns = [];
     querySnapshot.forEach((doc) => {
       const data = doc.data();
-      // Filter out user's own campaigns
-      if (data.userEmail !== currentUserEmail) {
+      // Filter out user's own campaigns and completed campaigns
+      if (data.userEmail !== currentUserEmail && !completedCampaignIds.includes(doc.id)) {
         campaigns.push({ id: doc.id, ...data });
       }
     });

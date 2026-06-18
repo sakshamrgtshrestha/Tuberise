@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCoins } from '../context/CoinContext';
 import { useAuth } from '../context/AuthContext';
 import { getActiveCampaignsForFeed } from '../services/campaignService';
+import { getCompletedCampaignIds } from '../services/completedTasksService';
 import SidebarDrawer from '../components/SidebarDrawer';
 
 const { width: SW } = Dimensions.get('window');
@@ -40,7 +41,8 @@ export default function CommentScreen({ navigation }) {
       (async () => {
         if (!user?.email) return;
         try {
-          const campaigns = await getActiveCampaignsForFeed(user.email);
+          const completedIds = await getCompletedCampaignIds(user.email);
+          const campaigns = await getActiveCampaignsForFeed(user.email, completedIds);
           const all = campaigns.filter(c => c.type === 'comment');
           if (active) { setCommentTasks(all); setIdx(0); }
         } catch (error) {

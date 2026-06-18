@@ -1,14 +1,56 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions, Animated, TouchableWithoutFeedback, ToastAndroid, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions, Animated, TouchableWithoutFeedback, ToastAndroid, Platform, Alert, Linking } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { Colors } from '../theme/colors';
+import { mockCoinsPerTask } from '../data/mockData';
 
 const { width } = Dimensions.get('window');
 
 export default function SidebarDrawer({ visible, onClose }) {
   const { user, signOut } = useAuth();
+  const navigation = useNavigation();
   
   const slideAnim = useRef(new Animated.Value(-width * 0.85)).current;
+
+  const handleBuyCoins = () => {
+    onClose();
+    navigation.navigate('BuyCoins');
+  };
+
+  const handleHowToUse = () => {
+    onClose();
+    navigation.navigate("HowToUse");
+  };
+
+  const handleEarnCoins = () => {
+    Alert.alert(
+      "How to Earn Coins 🪙",
+      `\n👁 Watch videos: +${mockCoinsPerTask.watch} coins\n👍 Like videos: +${mockCoinsPerTask.like} coins\n🔔 Subscribe: +${mockCoinsPerTask.subscribe} coins\n💬 Comment: +${mockCoinsPerTask.comment} coins\n\nStart watching now to earn!`,
+      [{ text: "Start Watching", onPress: () => onClose() }]
+    );
+  };
+
+  const handleFeedback = () => {
+    const email = 'sakchhyam10@gmail.com';
+    const subject = 'TubeRise App Feedback';
+    const body = 'Hi TubeRise Team,\n\n[Your feedback here]\n\nApp version: 1.0.0';
+    const url = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    Linking.canOpenURL(url).then(supported => {
+      if (supported) {
+        Linking.openURL(url);
+      } else {
+        Alert.alert("Error", `Please email us at: ${email}`);
+      }
+    }).catch(() => {
+      Alert.alert("Error", `Please email us at: ${email}`);
+    });
+  };
+
+  const handlePrivacyPolicy = () => {
+    onClose();
+    navigation.navigate("PrivacyPolicy");
+  };
 
   useEffect(() => {
     if (visible) {
@@ -60,22 +102,22 @@ export default function SidebarDrawer({ visible, onClose }) {
           </View>
           
           <View style={s.menuList}>
+            <MenuItem icon="🛒" label="Buy Coins" onPress={handleBuyCoins} />
             {/* 
-            <MenuItem icon="🛒" label="Buy Coins" />
             <MenuItem icon="✅" label="VIP Access" />
             <MenuItem icon="💻" label="Premium Promotion (Guaranteed)" labelColor="#3366FF" />
             <View style={s.divider} /> 
             */}
-            <MenuItem icon="❓" label="How to Use App Guide (English)" />
+            <MenuItem icon="❓" label="How to Use App Guide" onPress={handleHowToUse} />
             <View style={s.divider} />
+            <MenuItem icon="🏹" label="Earn Coins" onPress={handleEarnCoins} />
             {/* 
-            <MenuItem icon="🏹" label="Earn Coins" />
             <MenuItem icon="🏷️" label="Invitation Bonus" />
             <MenuItem icon="🔗" label="Invite Friends" />
             <MenuItem icon="💬" label="FAQs" /> 
             */}
             <MenuItem icon="⭐" label="Rate the App" />
-            <MenuItem icon="➤" label="Send a Feedback" />
+            <MenuItem icon="➤" label="Send a Feedback" onPress={handleFeedback} />
             <View style={s.divider} />
             <MenuItem 
               icon="🚪" 
@@ -89,7 +131,7 @@ export default function SidebarDrawer({ visible, onClose }) {
               }} 
             />
             <View style={s.divider} />
-            <MenuItem icon="🔒" label="Privacy Policy" />
+            <MenuItem icon="🔒" label="Privacy Policy" onPress={handlePrivacyPolicy} />
             {/* <MenuItem icon="🚪" label="Logout" onPress={() => { onClose(); signOut(); }} /> */}
           </View>
           

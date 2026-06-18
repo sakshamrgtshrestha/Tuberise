@@ -6,6 +6,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import ToastPill from './ToastPill';
+import { markTimerCompleted } from '../services/completedTasksService';
 
 const { width: SW } = Dimensions.get('window');
 const fmt = (s) => {
@@ -23,11 +24,17 @@ const LOCK_SCRIPT = `
     document.documentElement.style.overflow = 'hidden';
     document.body.style.overflow = 'hidden';
     document.body.style.touchAction = 'none';
-    var absorb = function(e) { e.stopPropagation(); e.preventDefault(); };
+    var absorb = function(e) { 
+      e.stopPropagation(); 
+      e.preventDefault(); 
+    };
     window.__tuberiseAbsorb = absorb;
-    var events = ['touchstart','touchmove','touchend','pointerdown','pointermove','pointerup','mousedown','click'];
+    var events = ['touchstart','touchmove','touchend',
+      'pointerdown','pointermove','pointerup',
+      'mousedown','click'];
     events.forEach(function(ev) {
-      document.addEventListener(ev, absorb, { passive: false, capture: true });
+      document.addEventListener(ev, absorb, 
+        { passive: false, capture: true });
     });
     window.__tuberiseEvents = events;
   })();
@@ -41,32 +48,82 @@ const UNLOCK_SCRIPT = `
     document.body.style.touchAction = '';
     if (window.__tuberiseAbsorb && window.__tuberiseEvents) {
       window.__tuberiseEvents.forEach(function(ev) {
-        document.removeEventListener(ev, window.__tuberiseAbsorb, { capture: true });
+        document.removeEventListener(ev, 
+          window.__tuberiseAbsorb, { capture: true });
       });
     }
     window.__tuberiseLockApplied = false;
+    window.__tuberiseAbsorb = null;
+    window.__tuberiseEvents = null;
   })();
   true;
 `;
 
 const LOGIN_CHECK_SCRIPT = `
-  (function checkLogin() {
+  (function() {
     setTimeout(function() {
-      var avatar = document.querySelector('#avatar-btn') || 
-                   document.querySelector('button.ytd-topbar-menu-button-renderer') ||
-                   document.querySelector('[aria-label="Account menu"]');
-      var signInBtn = document.querySelector('[aria-label="Sign in"]') ||
-                      document.querySelector('a[href*="accounts.google.com"]');
-      if (avatar && !signInBtn) {
+      try {
+        // Method 1: Check for account avatar/menu
+        var loggedIn = false;
+        
+        // Check multiple possible selectors
+        var selectors = [
+          '#avatar-btn',
+          'button[aria-label="Account menu"]',
+          'yt-img-shadow.ytd-topbar-menu-button-renderer',
+          '#masthead #avatar-btn',
+          'button.ytd-topbar-menu-button-renderer',
+          '[data-sessionlink*="logged"]',
+          'a[aria-label*="Switch account"]',
+          'ytd-account-item-renderer',
+          '#avatar-container'
+        ];
+        
+        for (var i = 0; i < selectors.length; i++) {
+          if (document.querySelector(selectors[i])) {
+            loggedIn = true;
+            break;
+          }
+        }
+        
+        // Method 2: Check if sign-in button is absent
+        var signInSelectors = [
+          'a[href*="accounts.google.com"]',
+          'yt-button-renderer[is-paper-button] a[href*="signin"]',
+          'paper-button[aria-label="Sign in"]'
+        ];
+        var hasSignIn = false;
+        for (var j = 0; j < signInSelectors.length; j++) {
+          if (document.querySelector(signInSelectors[j])) {
+            hasSignIn = true;
+            break;
+          }
+        }
+        
+        // Method 3: Check cookies for YouTube session
+        var hasCookie = document.cookie.indexOf('SID=') !== -1 || 
+                        document.cookie.indexOf('SSID=') !== -1 ||
+                        document.cookie.indexOf('APISID=') !== -1;
+        
+        var isLoggedIn = loggedIn || hasCookie || !hasSignIn;
+        
         window.ReactNativeWebView.postMessage(JSON.stringify({ 
-          type: 'LOGIN_STATUS', loggedIn: true 
+          type: 'LOGIN_STATUS', 
+          loggedIn: isLoggedIn,
+          debug: {
+            foundAvatar: loggedIn,
+            foundSignIn: hasSignIn,
+            hasCookie: hasCookie
+          }
         }));
-      } else {
+      } catch(e) {
         window.ReactNativeWebView.postMessage(JSON.stringify({ 
-          type: 'LOGIN_STATUS', loggedIn: false 
+          type: 'LOGIN_STATUS', 
+          loggedIn: true,
+          debug: { error: e.toString() }
         }));
       }
-    }, 3000);
+    }, 4000);
   })();
   true;
 `;
@@ -152,14 +209,17 @@ const COMMENT_DETECTION_SCRIPT = `
   true;
 `;
 
-export default function YouTubeWebView({ task, actionType, onReturnToApp }) {
+export default function YouTubeWebView({ task, actionType, onReturnToApp, userEmail, reducedTimer }) {
   const insets = useSafeAreaInsets();
   const webViewRef = useRef(null);
   const completedRef = useRef(false);
   const toastTimerRef = useRef(null);
 
-  const minSec = TASK_MIN_SECONDS[actionType] ?? task?.watchTimeRequired ?? 30;
-  const dur = actionType === 'watch' ? (task?.watchTimeRequired ?? 60) : minSec;
+  const dur = reducedTimer 
+    ? 5  // only 5 seconds if timer was already completed before
+    : actionType === 'watch' 
+      ? (task?.watchTimeRequired ?? 60) 
+      : (TASK_MIN_SECONDS[actionType] ?? 30);
 
   const [secondsLeft, setSecondsLeft] = useState(dur);
   const [toastMessage, setToastMessage] = useState('');
@@ -169,6 +229,7 @@ export default function YouTubeWebView({ task, actionType, onReturnToApp }) {
   const [timerPaused, setTimerPaused] = useState(false);
   const timerPausedRef = useRef(false);
   const [actionCompleted, setActionCompleted] = useState(false);
+  const [ytLoggedIn, setYtLoggedIn] = useState(false);
 
   const showToast = (msg, duration = 3000) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -181,8 +242,17 @@ export default function YouTubeWebView({ task, actionType, onReturnToApp }) {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'LOGIN_STATUS') {
-        if (!data.loggedIn && actionType !== 'watch') {
-          showToast('Please log into YouTube first to complete this task');
+        console.log('LOGIN_STATUS received:', data);
+        if (data.loggedIn) {
+          setYtLoggedIn(true);
+          setTimerStarted(true);
+          webViewRef.current?.injectJavaScript(LOCK_SCRIPT);
+        } else {
+          setYtLoggedIn(false);
+          webViewRef.current?.injectJavaScript(UNLOCK_SCRIPT);
+          if (actionType !== 'watch') {
+            showToast('Please log into YouTube first to complete this task');
+          }
         }
       }
       if (data.type === 'ACTION_COMPLETED') {
@@ -240,6 +310,17 @@ export default function YouTubeWebView({ task, actionType, onReturnToApp }) {
     };
   }, []);
 
+  useEffect(() => {
+    const fallback = setTimeout(() => {
+      if (!timerStarted) {
+        console.log('Login check timeout - assuming logged in');
+        setYtLoggedIn(true);
+        setTimerStarted(true);
+      }
+    }, 8000);
+    return () => clearTimeout(fallback);
+  }, [timerStarted]);
+
   const progressPct = ((dur - secondsLeft) / dur) * 100;
 
   // Label shown on the floating pill after timer ends
@@ -277,10 +358,12 @@ export default function YouTubeWebView({ task, actionType, onReturnToApp }) {
           } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
             timerPausedRef.current = false;
             setTimerPaused(false);
-            setTimerStarted(true);
+            webViewRef.current?.injectJavaScript(LOGIN_CHECK_SCRIPT);
+            if (ytLoggedIn) {
+              setTimerStarted(true);
+            }
           }
         }}
-        onError={(e) => console.log('WebView error:', e.nativeEvent)}
       />
 
       {/* ══════════════════════════════════════════════
@@ -297,27 +380,51 @@ export default function YouTubeWebView({ task, actionType, onReturnToApp }) {
             <Text style={s.backBtnTxt}>✕</Text>
           </TouchableOpacity>
 
+          {!ytLoggedIn && !timerStarted && (
+            <View style={s.ytLoginBanner} pointerEvents="none">
+              <Text style={s.ytLoginBannerTxt}>
+                ⚠️ Please sign in to YouTube with:
+              </Text>
+              <Text style={s.ytLoginEmailTxt}>
+                {userEmail || 'your Google account'}
+              </Text>
+              <Text style={s.ytLoginSubTxt}>
+                Use the same account in all sections
+              </Text>
+            </View>
+          )}
+
+          {ytLoggedIn && !timerDone && (
+            <View style={s.accountPill} pointerEvents="none">
+              <Text style={s.accountPillTxt}>
+                📧 Signed in as: {userEmail}
+              </Text>
+            </View>
+          )}
+
           {/* Transparent overlay — blocks all touches during countdown */}
-          <TouchableOpacity
-            activeOpacity={1}
-            pointerEvents={!timerDone ? 'auto' : 'none'}
-            onPress={() => {
-              if (!timerStarted) {
-                showToast('Please wait for the video to load…');
-              } else if (timerPaused) {
-                showToast('Timer paused — sign in to YouTube to continue.');
-              } else {
-                const msgs = {
-                  watch: 'Watch the full video to earn coins',
-                  subscribe: 'Subscribe to the channel to earn coins',
-                  like: 'Like the video to earn coins',
-                  comment: 'Comment on the video to earn coins',
-                };
-                showToast(msgs[actionType] || 'Complete the task to earn coins');
-              }
-            }}
-            style={s.lockOverlay}
-          />
+          {ytLoggedIn && (
+            <TouchableOpacity
+              activeOpacity={1}
+              pointerEvents={!timerDone ? 'auto' : 'none'}
+              onPress={() => {
+                if (!timerStarted) {
+                  showToast('Please wait for the video to load…');
+                } else if (timerPaused) {
+                  showToast('Timer paused — sign in to YouTube to continue.');
+                } else {
+                  const msgs = {
+                    watch: 'Watch the full video to earn coins',
+                    subscribe: 'Subscribe to the channel to earn coins',
+                    like: 'Like the video to earn coins',
+                    comment: 'Comment on the video to earn coins',
+                  };
+                  showToast(msgs[actionType] || 'Complete the task to earn coins');
+                }
+              }}
+              style={s.lockOverlay}
+            />
+          )}
 
           {/* Floating timer bar — bottom centre */}
           <View style={s.timerBar}>
@@ -331,10 +438,16 @@ export default function YouTubeWebView({ task, actionType, onReturnToApp }) {
                   : `⏳ ${fmt(secondsLeft)} left`}
               </Text>
             </View>
-            {actionType === 'watch'     && <Text style={s.timerBarHint}>Watch the full video to earn coins</Text>}
-            {actionType === 'subscribe' && <Text style={s.timerBarHint}>Subscribe to the channel to earn coins</Text>}
-            {actionType === 'like'      && <Text style={s.timerBarHint}>Like the video to earn coins</Text>}
-            {actionType === 'comment'   && <Text style={s.timerBarHint}>Comment on the video to earn coins</Text>}
+            {reducedTimer ? (
+              <Text style={s.timerBarHint}>⚡ Quick verify — 5 seconds only!</Text>
+            ) : (
+              <>
+                {actionType === 'watch'     && <Text style={s.timerBarHint}>Watch the full video to earn coins</Text>}
+                {actionType === 'subscribe' && <Text style={s.timerBarHint}>Subscribe to the channel to earn coins</Text>}
+                {actionType === 'like'      && <Text style={s.timerBarHint}>Like the video to earn coins</Text>}
+                {actionType === 'comment'   && <Text style={s.timerBarHint}>Comment on the video to earn coins</Text>}
+              </>
+            )}
             <View style={s.progressTrack}>
               <View style={[s.progressFill, { width: timerStarted ? `${progressPct}%` : '0%' }]} />
             </View>
@@ -348,7 +461,21 @@ export default function YouTubeWebView({ task, actionType, onReturnToApp }) {
           Only a small floating pill remains at bottom-right.
       ══════════════════════════════════════════════ */}
       {timerDone && (
-        <View style={s.returnPill}>
+        <>
+          {/* Back / exit button — top-left (when timer is done) */}
+          <TouchableOpacity
+            onPress={async () => {
+              if (userEmail && task?.id) {
+                await markTimerCompleted(userEmail, task.id);
+              }
+              onReturnToApp({ success: false });
+            }}
+            style={s.backBtn}
+          >
+            <Text style={s.backBtnTxt}>✕</Text>
+          </TouchableOpacity>
+
+          <View style={s.returnPill}>
           {/* Status badge */}
           <View style={[s.statusBadge, actionCompleted && s.statusBadgeDone]}>
             <Text style={s.statusBadgeTxt}>
@@ -375,6 +502,7 @@ export default function YouTubeWebView({ task, actionType, onReturnToApp }) {
             <Text style={s.returnBtnTxt}>Return to App</Text>
           </TouchableOpacity>
         </View>
+        </>
       )}
 
       <ToastPill message={toastMessage} visible={toastVisible} />
@@ -448,4 +576,49 @@ const s = StyleSheet.create({
   returnBtnActive: { backgroundColor: '#10B981' },
   returnBtnGray:   { backgroundColor: '#6B7280' },
   returnBtnTxt: { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  ytLoginBanner: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(220, 38, 38, 0.92)',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    zIndex: 1001,
+    alignItems: 'center',
+  },
+  ytLoginBannerTxt: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  ytLoginEmailTxt: {
+    color: '#FFD700',
+    fontSize: 15,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  ytLoginSubTxt: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 11,
+    textAlign: 'center',
+    marginTop: 2,
+  },
+  accountPill: {
+    position: 'absolute',
+    top: 8,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+    zIndex: 1001,
+  },
+  accountPillTxt: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
+  },
 });
