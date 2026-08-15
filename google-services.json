@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "1090230987883",
+    "project_id": "tuberise-22c2a",
+    "storage_bucket": "tuberise-22c2a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1090230987883:android:d419525570661d147f552e",
+        "android_client_info": {
+          "package_name": "com.tuberise.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1090230987883-3u1jh9tesaq2iv6k6v9es42q8cs6enk5.apps.googleusercontent.com",
+          "client_type": 3
+        },
+        {
+          "client_id": "593762761539-m5ejg19jkjojhs0mv2pt9e9kpfe2bql8.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.tuberise.app",
+            "certificate_hash": "28:2c:30:07:52:bb:5a:e3:2e:fb:4d:cd:77:59:a4:7f:2b:71:2e:3a"
+          }
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCS_kGNj8Cj1a1Mg4ohDXhefCUO9jouo2A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1090230987883-3u1jh9tesaq2iv6k6v9es42q8cs6enk5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

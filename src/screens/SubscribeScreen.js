@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { getActiveCampaignsForFeed } from '../services/campaignService';
 import { getCompletedCampaignIds } from '../services/completedTasksService';
 import SidebarDrawer from '../components/SidebarDrawer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width: SW } = Dimensions.get('window');
 const SCREEN_H = Dimensions.get('window').height;
@@ -35,6 +36,26 @@ export default function SubscribeScreen({ navigation }) {
   const [autoPlay, setAutoPlay] = useState(false);
   const [tasks, setTasks] = useState([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('autoplay_enabled');
+        if (stored !== null) setAutoPlay(stored === 'true');
+      } catch (e) {
+        console.error("Failed to load autoplay state", e);
+      }
+    })();
+  }, []);
+
+  const handleToggleAutoPlay = async (val) => {
+    setAutoPlay(val);
+    try {
+      await AsyncStorage.setItem('autoplay_enabled', String(val));
+    } catch (e) {
+      console.error("Failed to save autoplay state", e);
+    }
+  };
   const [channelPhoto, setChannelPhoto] = useState(null);
 
   useFocusEffect(
@@ -156,7 +177,7 @@ export default function SubscribeScreen({ navigation }) {
         <View style={s.toggleRow}>
           <Text style={s.toggleIcon}>👑</Text>
           <Text style={s.toggleLbl}>Automatically play next channel</Text>
-          <Switch value={autoPlay} onValueChange={setAutoPlay}
+          <Switch value={autoPlay} onValueChange={handleToggleAutoPlay}
             trackColor={{ false: '#D0D0D0', true: '#A0B9FF' }}
             thumbColor={autoPlay ? '#3366FF' : '#F5F5F5'} />
         </View>

@@ -11,7 +11,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../theme/colors';
 import { useAuth } from '../context/AuthContext';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
 
 const { width: SW } = Dimensions.get('window');
 
@@ -29,25 +28,7 @@ export default function LoginScreen() {
   // GoogleSignin.configure() is now called in AuthContext on app startup.
 
   const handleGoogleSignIn = async () => {
-    try {
-      await GoogleSignin.hasPlayServices();
-      // Force account picker every time by clearing any existing Google session
-      try { await GoogleSignin.revokeAccess(); } catch (e) {}
-      try { await GoogleSignin.signOut(); } catch (e) {}
-      const response = await GoogleSignin.signIn();
-      const tokens = await GoogleSignin.getTokens();
-      const userInfo = response.data?.user || response.user;
-      signIn({
-        id: userInfo.id,
-        name: userInfo.name,
-        email: userInfo.email,
-        photo: userInfo.photo,
-        accessToken: tokens.accessToken,
-      });
-    } catch (error) {
-      console.log('Google Sign-In error:', error);
-      ToastAndroid.show('Sign in failed. Please try again.', ToastAndroid.SHORT);
-    }
+    await signIn();
   };
 
   // ── Admin form animation (commented out — admin now uses Google Sign-In) ──

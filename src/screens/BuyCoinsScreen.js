@@ -12,8 +12,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCoins } from '../context/CoinContext';
-
-const RED = '#E02020';
+import { Colors } from '../theme/colors';
 
 // ── Edit prices here anytime ──────────────────────────────────────────────────
 const COIN_PACKAGES = [
@@ -52,9 +51,9 @@ export default function BuyCoinsScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={RED} />
+      <StatusBar barStyle="light-content" backgroundColor="#E53935" />
 
-      {/* ── Red Header ── */}
+      {/* ── Header ── */}
       <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -104,7 +103,7 @@ const styles = StyleSheet.create({
 
   /* Header */
   header: {
-    backgroundColor: RED,
+    backgroundColor: '#E53935',
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
@@ -187,7 +186,7 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   buyBtn: {
-    backgroundColor: RED,
+    backgroundColor: '#E53935',
     borderRadius: 10,
     paddingVertical: 10,
     paddingHorizontal: 32,

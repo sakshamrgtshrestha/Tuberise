@@ -141,3 +141,23 @@ export const updateCampaignProgress = async (campaignId) => {
     throw error;
   }
 };
+
+// ── Duplicate campaign guard ──────────────────────────────────────────────────
+// Returns true if the user already has an active campaign for this
+// exact videoId + type combination.  Used in CampaignCreationScreen.
+export const hasActiveCampaignForVideoAndType = async (userEmail, videoId, type) => {
+  try {
+    const q = query(
+      collection(db, CAMPAIGNS_COLLECTION),
+      where('userEmail', '==', userEmail),
+      where('videoId',   '==', videoId),
+      where('type',      '==', type),
+      where('status',    '==', 'active')
+    );
+    const snapshot = await getDocs(q);
+    return !snapshot.empty;
+  } catch (error) {
+    console.error('Error checking duplicate campaign:', error);
+    return false; // fail open — don't block on network errors
+  }
+};

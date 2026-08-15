@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, StatusBar,
   Switch, Image, Dimensions, ScrollView
@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { getActiveCampaignsForFeed } from '../services/campaignService';
 import { getCompletedCampaignIds } from '../services/completedTasksService';
 import SidebarDrawer from '../components/SidebarDrawer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width: SW } = Dimensions.get('window');
 const SCREEN_H = Dimensions.get('window').height;
@@ -31,6 +32,26 @@ export default function HomeScreen({ navigation }) {
   const [autoPlay, setAutoPlay] = useState(false);
   const [watchTasks, setWatchTasks] = useState([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('autoplay_enabled');
+        if (stored !== null) setAutoPlay(stored === 'true');
+      } catch (e) {
+        console.error("Failed to load autoplay state", e);
+      }
+    })();
+  }, []);
+
+  const handleToggleAutoPlay = async (val) => {
+    setAutoPlay(val);
+    try {
+      await AsyncStorage.setItem('autoplay_enabled', String(val));
+    } catch (e) {
+      console.error("Failed to save autoplay state", e);
+    }
+  };
 
   // Fetch active campaigns from Firestore
   useFocusEffect(
@@ -136,7 +157,7 @@ export default function HomeScreen({ navigation }) {
           <Text style={s.toggleLbl}>Automatically play next video</Text>
           <Switch
             value={autoPlay}
-            onValueChange={setAutoPlay}
+            onValueChange={handleToggleAutoPlay}
             trackColor={{ false: '#D0D0D0', true: '#A0B9FF' }}
             thumbColor={autoPlay ? '#3366FF' : '#F5F5F5'}
           />

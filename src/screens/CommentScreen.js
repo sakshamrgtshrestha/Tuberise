@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { getActiveCampaignsForFeed } from '../services/campaignService';
 import { getCompletedCampaignIds } from '../services/completedTasksService';
 import SidebarDrawer from '../components/SidebarDrawer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width: SW } = Dimensions.get('window');
 const SCREEN_H = Dimensions.get('window').height;
@@ -33,6 +34,26 @@ export default function CommentScreen({ navigation }) {
   const [autoPlay, setAutoPlay] = useState(false);
   const [commentTasks, setCommentTasks] = useState([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
+
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('autoplay_enabled');
+        if (stored !== null) setAutoPlay(stored === 'true');
+      } catch (e) {
+        console.error("Failed to load autoplay state", e);
+      }
+    })();
+  }, []);
+
+  const handleToggleAutoPlay = async (val) => {
+    setAutoPlay(val);
+    try {
+      await AsyncStorage.setItem('autoplay_enabled', String(val));
+    } catch (e) {
+      console.error("Failed to save autoplay state", e);
+    }
+  };
 
   // Re-read the shared store every time this tab gains focus
   useFocusEffect(
@@ -129,7 +150,7 @@ export default function CommentScreen({ navigation }) {
           <Text style={s.toggleLbl}>Automatically play next video</Text>
           <Switch
             value={autoPlay}
-            onValueChange={setAutoPlay}
+            onValueChange={handleToggleAutoPlay}
             trackColor={{ false: '#D0D0D0', true: '#A0B9FF' }}
             thumbColor={autoPlay ? '#3366FF' : '#F5F5F5'}
           />

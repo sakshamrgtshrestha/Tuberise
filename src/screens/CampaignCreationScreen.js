@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useCoins } from '../context/CoinContext';
 import { useAuth } from '../context/AuthContext';
-import { createCampaign } from '../services/campaignService';
+import { createCampaign, hasActiveCampaignForVideoAndType } from '../services/campaignService';
 
 // ── Pricing config — edit costPerUnit here to change prices ──────────────────
 const PRICING_CONFIG = {
@@ -82,10 +82,13 @@ export default function CampaignCreationScreen({ navigation }) {
   const [watchDuration, setWatchDuration] = useState('60');
 
   // Fetch state
-  const [videoMeta,    setVideoMeta]    = useState(null);
-  const [fetchingMeta, setFetchingMeta] = useState(false);
-  const [urlError,     setUrlError]     = useState('');
-  const [metaError,    setMetaError]    = useState('');
+  const [videoMeta,      setVideoMeta]      = useState(null);
+  const [fetchingMeta,   setFetchingMeta]   = useState(false);
+  const [urlError,       setUrlError]       = useState('');
+  const [metaError,      setMetaError]      = useState('');
+  // Duplicate-campaign guard
+  const [duplicateError, setDuplicateError] = useState('');
+  const [checkingDup,    setCheckingDup]    = useState(false);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const videoId    = extractVideoId(videoUrl.trim());
@@ -98,7 +101,8 @@ export default function CampaignCreationScreen({ navigation }) {
   const durationOk = taskType !== 'watch' || durSecs >= 60;
   const videoOk    = !!videoMeta && !metaError;
   const canSubmit  = isValidUrl && videoOk && qty > 0 && qty <= 10000
-                     && durationOk && canAfford && totalCost > 0;
+                     && durationOk && canAfford && totalCost > 0
+                     && !duplicateError;
 
   // ── Validate URL on change ─────────────────────────────────────────────────
   useEffect(() => {
@@ -162,7 +166,34 @@ export default function CampaignCreationScreen({ navigation }) {
   useEffect(() => {
     setVideoMeta(null);
     setMetaError('');
+    setDuplicateError('');
   }, [videoId]);
+
+  // ── Duplicate-campaign check (re-runs on videoMeta OR taskType change) ──────
+  useEffect(() => {
+    if (!videoMeta || !videoId || !user?.email) {
+      setDuplicateError('');
+      return;
+    }
+    let cancelled = false;
+    setCheckingDup(true);
+    hasActiveCampaignForVideoAndType(user.email, videoId, taskType)
+      .then((isDuplicate) => {
+        if (cancelled) return;
+        if (isDuplicate) {
+          const typeLabel = PRICING_CONFIG[taskType]?.label ?? taskType;
+          setDuplicateError(
+            `You already have an active ${typeLabel} campaign for this video. ` +
+            `Wait for it to complete or delete it before creating another ${typeLabel} campaign for the same video. ` +
+            `(You can still create a different campaign type for this video.)`
+          );
+        } else {
+          setDuplicateError('');
+        }
+      })
+      .finally(() => { if (!cancelled) setCheckingDup(false); });
+    return () => { cancelled = true; };
+  }, [videoMeta, taskType]);
 
   // ── Submit handler — preserves all existing Firestore logic ───────────────
   const handleSubmit = async () => {
@@ -326,6 +357,19 @@ export default function CampaignCreationScreen({ navigation }) {
           })}
         </View>
 
+        {/* Duplicate campaign error — shown below type selector */}
+        {checkingDup && videoMeta ? (
+          <View style={s.dupCheckingBox}>
+            <ActivityIndicator size="small" color={RED} />
+            <Text style={s.dupCheckingTxt}>Checking for duplicate campaigns…</Text>
+          </View>
+        ) : duplicateError ? (
+          <View style={s.dupErrorBox}>
+            <MaterialIcons name="block" size={18} color={RED} />
+            <Text style={s.dupErrorTxt}>{duplicateError}</Text>
+          </View>
+        ) : null}
+
         {/* ── 4. Quantity Input ────────────────────────────────────────────── */}
         <Text style={s.sectionLabel}>Number of {config.label}</Text>
         <View style={s.numRow}>
@@ -408,6 +452,7 @@ export default function CampaignCreationScreen({ navigation }) {
             {(!isValidUrl && videoUrl.length > 0) ? '• Enter a valid YouTube URL\n' : ''}
             {(isValidUrl && !videoMeta && !fetchingMeta && !metaError) ? '• Tap "Fetch Video Info" to verify the video\n' : ''}
             {metaError ? `• ${metaError}\n` : ''}
+            {duplicateError ? '• You already have an active campaign for this video + type\n' : ''}
             {qty === 0 ? '• Enter a quantity\n' : ''}
             {qty > 10000 ? '• Quantity exceeds maximum (10,000)\n' : ''}
             {(taskType === 'watch' && durSecs < 60) ? '• Watch duration must be at least 60s\n' : ''}
@@ -559,4 +604,18 @@ const s = StyleSheet.create({
     fontSize: 12, color: '#9CA3AF', textAlign: 'center',
     marginTop: 10, lineHeight: 20,
   },
+
+  /* Duplicate campaign error */
+  dupErrorBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: '#FFF0F0', borderRadius: 10, padding: 12,
+    borderWidth: 1, borderColor: '#FECACA', marginTop: 10,
+  },
+  dupErrorTxt: { flex: 1, fontSize: 13, color: RED, lineHeight: 19 },
+
+  dupCheckingBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    padding: 10, marginTop: 8,
+  },
+  dupCheckingTxt: { fontSize: 13, color: '#6B7280' },
 });

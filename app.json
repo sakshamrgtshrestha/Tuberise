@@ -23,6 +23,7 @@
         "backgroundColor": "#E53935"
       },
       "package": "com.tuberise.app",
+      "googleServicesFile": "./google-services.json",
       "intentFilters": [
         {
           "action": "VIEW",
@@ -45,7 +46,12 @@
     "plugins": [
       "expo-font",
       "expo-web-browser",
-      "@react-native-google-signin/google-signin"
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.1090230987883-3u1jh9tesaq2iv6k6v9es42q8cs6enk5"
+        }
+      ]
     ],
     "extra": {
       "eas": {

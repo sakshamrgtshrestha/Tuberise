@@ -75,10 +75,28 @@ export function AuthProvider({ children }) {
   };
 
   // ── Google sign-in ─────────────────────────────────────────────────────────
-  const signIn = async (userData) => {
+  const signIn = async () => {
     setLoading(true);
     setAuthError('');
     try {
+      await GoogleSignin.hasPlayServices();
+      const response = await GoogleSignin.signIn();
+      const tokens = await GoogleSignin.getTokens();
+
+      // v16 returns data inside response.data
+      const userDetails = response.data?.user || response.user || response;
+      
+      console.log('Raw Google Sign-In response:', JSON.stringify(response));
+      console.log('User details extracted:', JSON.stringify(userDetails));
+
+      const userData = {
+        id: userDetails.id,
+        email: userDetails.email,
+        displayName: userDetails.name || userDetails.displayName,
+        photoURL: userDetails.photo || userDetails.photoURL,
+        accessToken: tokens.accessToken,
+      };
+
       // ── Debug: log email and admin check ──────────────────────────────────
       console.log('User email:', userData.email);
       console.log('Is admin email:', userData.email === ADMIN_EMAIL);
@@ -108,8 +126,10 @@ export function AuthProvider({ children }) {
       setUser(fullUser);
       await persistUser(fullUser);
     } catch (error) {
-      console.error('Error during sign in:', error);
-      setAuthError('Failed to sign in and load user profile.');
+      console.error('Google Sign-In error:', error);
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      setAuthError('Sign in failed. Please try again.');
     } finally {
       setLoading(false);
     }
