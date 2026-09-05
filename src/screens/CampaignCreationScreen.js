@@ -19,10 +19,38 @@ import { createCampaign, hasActiveCampaignForVideoAndType } from '../services/ca
 
 // ── Pricing config — edit costPerUnit here to change prices ──────────────────
 const PRICING_CONFIG = {
-  watch:     { costPerUnit: 50,  label: 'Views',       icon: '👁'  },
-  subscribe: { costPerUnit: 210, label: 'Subscribers', icon: '🔔' },
-  like:      { costPerUnit: 95,  label: 'Likes',       icon: '👍' },
-  comment:   { costPerUnit: 135, label: 'Comments',    icon: '💬' },
+  watch:     { costPerUnit: 50,  label: 'Views',       iconName: 'play-circle-outline' },
+  subscribe: { costPerUnit: 210, label: 'Subscribers', iconName: 'subscriptions'       },
+  like:      { costPerUnit: 95,  label: 'Likes',       iconName: 'thumb-up'            },
+  comment:   { costPerUnit: 135, label: 'Comments',    iconName: 'chat-bubble'         },
+};
+
+// ── Duration options (seconds) ────────────────────────────────────────────────
+const DURATION_OPTIONS = [
+  60, 90, 120, 150, 180, 210, 240, 270, 300,
+  330, 360, 420, 450, 480, 510, 540, 570, 600,
+];
+
+// ── Duration multipliers ───────────────────────────────────────────────────────
+const DURATION_MULTIPLIERS = {
+  60:  1.0,
+  90:  1.2,
+  120: 1.5,
+  150: 1.7,
+  180: 2.0,
+  210: 2.2,
+  240: 2.5,
+  270: 2.7,
+  300: 3.0,
+  330: 3.2,
+  360: 3.5,
+  420: 4.0,
+  450: 4.2,
+  480: 4.5,
+  510: 4.7,
+  540: 5.0,
+  570: 5.2,
+  600: 5.5,
 };
 
 const YOUTUBE_API_KEY = 'AIzaSyDSA7JUtKvAsOJ8rWLozvI2HISw8T3lA7o';
@@ -69,6 +97,55 @@ function WarningBox() {
   );
 }
 
+// ── Duration Dropdown ─────────────────────────────────────────────────────────
+function DurationDropdown({ selected, onSelect }) {
+  const [open, setOpen] = React.useState(false);
+  const multiplier = DURATION_MULTIPLIERS[selected] ?? 1.0;
+  return (
+    <View style={s.dropdownWrapper}>
+      <TouchableOpacity
+        style={s.dropdownTrigger}
+        onPress={() => setOpen((v) => !v)}
+        activeOpacity={0.8}
+      >
+        <MaterialIcons name="timer" size={18} color="#6B7280" style={{ marginRight: 8 }} />
+        <Text style={s.dropdownTriggerTxt}>
+          {selected}s{'  '}
+          <Text style={s.dropdownMultiplierInline}>×{multiplier.toFixed(1)}</Text>
+        </Text>
+        <MaterialIcons
+          name={open ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
+          size={22}
+          color="#6B7280"
+        />
+      </TouchableOpacity>
+      {open && (
+        <View style={s.dropdownList}>
+          {DURATION_OPTIONS.map((opt) => {
+            const mult = DURATION_MULTIPLIERS[opt] ?? 1.0;
+            const isSelected = opt === selected;
+            return (
+              <TouchableOpacity
+                key={opt}
+                style={[s.dropdownItem, isSelected && s.dropdownItemActive]}
+                onPress={() => { onSelect(opt); setOpen(false); }}
+                activeOpacity={0.75}
+              >
+                <Text style={[s.dropdownItemLabel, isSelected && s.dropdownItemLabelActive]}>
+                  {opt}s
+                </Text>
+                <Text style={[s.dropdownItemMult, isSelected && s.dropdownItemLabelActive]}>
+                  ×{mult.toFixed(1)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ── Main Screen ───────────────────────────────────────────────────────────────
 export default function CampaignCreationScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -79,7 +156,7 @@ export default function CampaignCreationScreen({ navigation }) {
   const [taskType,      setTaskType]      = useState('watch');
   const [videoUrl,      setVideoUrl]      = useState('');
   const [quantity,      setQuantity]      = useState('10');
-  const [watchDuration, setWatchDuration] = useState('60');
+  const [watchDuration, setWatchDuration] = useState(60); // number (seconds)
 
   // Fetch state
   const [videoMeta,      setVideoMeta]      = useState(null);
@@ -94,14 +171,14 @@ export default function CampaignCreationScreen({ navigation }) {
   const videoId    = extractVideoId(videoUrl.trim());
   const isValidUrl = !!videoId;
   const qty        = Math.max(0, parseInt(quantity, 10) || 0);
-  const durSecs    = parseInt(watchDuration, 10) || 0;
+  const durSecs    = watchDuration; // already a number
   const config     = PRICING_CONFIG[taskType];
-  const totalCost  = config.costPerUnit * qty;
+  const multiplier = DURATION_MULTIPLIERS[durSecs] ?? 1.0;
+  const totalCost  = Math.round(config.costPerUnit * qty * multiplier);
   const canAfford  = coinBalance >= totalCost;
-  const durationOk = taskType !== 'watch' || durSecs >= 60;
   const videoOk    = !!videoMeta && !metaError;
   const canSubmit  = isValidUrl && videoOk && qty > 0 && qty <= 10000
-                     && durationOk && canAfford && totalCost > 0
+                     && canAfford && totalCost > 0
                      && !duplicateError;
 
   // ── Validate URL on change ─────────────────────────────────────────────────
@@ -205,11 +282,10 @@ export default function CampaignCreationScreen({ navigation }) {
       return;
     }
 
-    // coinsReward: what each completing user earns
-    const coinsRewardPerTask =
-      taskType === 'watch'
-        ? Math.round(durSecs * 0.42)
-        : Math.round(config.costPerUnit / 5);
+    // coinsReward: what each completing user earns (scales with duration for all types)
+    const coinsRewardPerTask = Math.round(
+      config.costPerUnit * multiplier * 0.5
+    );
 
     const ok = await spendCoins(totalCost, 'Campaign creation');
     if (ok) {
@@ -221,7 +297,7 @@ export default function CampaignCreationScreen({ navigation }) {
           type:             taskType,           // 'watch' | 'subscribe' | 'like' | 'comment'
           totalRequired:    qty,
           coinsReward:      coinsRewardPerTask,
-          watchTimeRequired: taskType === 'watch' ? durSecs : 60,
+          watchTimeRequired: durSecs,            // saved for ALL task types
           channelName:      videoMeta?.channelName || 'My Channel',
           totalCost,
         });
@@ -350,7 +426,11 @@ export default function CampaignCreationScreen({ navigation }) {
                 onPress={() => setTaskType(type)}
                 activeOpacity={0.8}
               >
-                <Text style={s.typeEmoji}>{cfg.icon}</Text>
+                <MaterialIcons
+                  name={cfg.iconName}
+                  size={28}
+                  color={active ? '#FFFFFF' : '#000000'}
+                />
                 <Text style={[s.typeTxt, active && s.typeTxtActive]}>{cfg.label}</Text>
               </TouchableOpacity>
             );
@@ -389,33 +469,19 @@ export default function CampaignCreationScreen({ navigation }) {
           <Text style={s.errorTxt}>Quantity must be at least 1</Text>
         ) : null}
 
-        {/* ── 5. Watch Duration (watch type only) ─────────────────────────── */}
-        {taskType === 'watch' && (
-          <>
-            <Text style={s.sectionLabel}>Watch Duration (seconds, min 60)</Text>
-            <View style={s.numRow}>
-              <TextInput
-                style={s.numInput}
-                value={watchDuration}
-                onChangeText={(v) => setWatchDuration(v.replace(/[^0-9]/g, ''))}
-                keyboardType="numeric"
-                placeholder="60"
-                placeholderTextColor="#9CA3AF"
-              />
-              <Text style={s.numUnit}>seconds</Text>
-            </View>
-            {durSecs < 60 && watchDuration !== '' && (
-              <Text style={s.errorTxt}>Minimum watch duration is 60 seconds</Text>
-            )}
-          </>
-        )}
+        {/* ── 5. Time Required dropdown (ALL task types) ───────────────────── */}
+        <Text style={s.sectionLabel}>Time Required (Sec)</Text>
+        <DurationDropdown
+          selected={watchDuration}
+          onSelect={setWatchDuration}
+        />
 
         {/* ── 6. Total Cost Display ────────────────────────────────────────── */}
         <View style={s.costCard}>
-          <View>
+          <View style={{ flex: 1, marginRight: 12 }}>
             <Text style={s.costLabel}>Total Cost</Text>
-            <Text style={s.costFormula}>
-              {config.costPerUnit} ⚡ × {qty.toLocaleString()} {config.label}
+            <Text style={s.costFormula} numberOfLines={2}>
+              ⚡ {config.costPerUnit} × {qty.toLocaleString()} {config.label} × {multiplier.toFixed(1)}x ({durSecs}s)
             </Text>
           </View>
           <View style={[s.costBadge, !canAfford && totalCost > 0 && s.costBadgeWarn]}>
@@ -455,7 +521,6 @@ export default function CampaignCreationScreen({ navigation }) {
             {duplicateError ? '• You already have an active campaign for this video + type\n' : ''}
             {qty === 0 ? '• Enter a quantity\n' : ''}
             {qty > 10000 ? '• Quantity exceeds maximum (10,000)\n' : ''}
-            {(taskType === 'watch' && durSecs < 60) ? '• Watch duration must be at least 60s\n' : ''}
             {(!canAfford && totalCost > 0) ? `• Need ${(totalCost - coinBalance).toLocaleString()} more coins` : ''}
           </Text>
         )}
@@ -537,14 +602,39 @@ const s = StyleSheet.create({
   /* Task Type Selector */
   typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   typeBtn: {
-    flex: 1, minWidth: '44%', alignItems: 'center', paddingVertical: 12,
+    flex: 1, minWidth: '44%', alignItems: 'center', paddingVertical: 14,
     backgroundColor: '#FFF', borderRadius: 12, borderWidth: 1.5,
     borderColor: '#E5E7EB',
   },
   typeBtnActive: { backgroundColor: RED, borderColor: RED },
-  typeEmoji:     { fontSize: 24, marginBottom: 4 },
-  typeTxt:       { fontSize: 13, fontWeight: '600', color: '#6B7280' },
-  typeTxtActive: { color: '#FFF' },
+  typeTxt:       { fontSize: 13, fontWeight: '600', color: '#000000', marginTop: 6 },
+  typeTxtActive: { color: '#FFFFFF' },
+
+  /* Duration Dropdown */
+  dropdownWrapper: { position: 'relative', zIndex: 10 },
+  dropdownTrigger: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FFF', borderRadius: 12, borderWidth: 1.5,
+    borderColor: '#E5E7EB', paddingHorizontal: 14, height: 50,
+  },
+  dropdownTriggerTxt: { flex: 1, fontSize: 16, fontWeight: '700', color: '#121212' },
+  dropdownMultiplierInline: { fontSize: 13, fontWeight: '500', color: RED },
+  dropdownList: {
+    position: 'absolute', top: 54, left: 0, right: 0,
+    backgroundColor: '#FFF', borderRadius: 12, borderWidth: 1.5,
+    borderColor: '#E5E7EB', shadowColor: '#000', shadowOpacity: 0.12,
+    shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 8,
+    maxHeight: 240, zIndex: 100,
+  },
+  dropdownItem: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingVertical: 11,
+    borderBottomWidth: 1, borderBottomColor: '#F3F4F6',
+  },
+  dropdownItemActive:      { backgroundColor: '#FFF0F0' },
+  dropdownItemLabel:       { fontSize: 15, fontWeight: '600', color: '#374151' },
+  dropdownItemLabelActive: { color: RED, fontWeight: '700' },
+  dropdownItemMult:        { fontSize: 13, color: '#9CA3AF', fontWeight: '500' },
 
   /* Quantity / Duration Input */
   numRow: {
@@ -564,7 +654,7 @@ const s = StyleSheet.create({
     shadowRadius: 4, elevation: 2,
   },
   costLabel:   { fontSize: 13, color: '#6B7280', fontWeight: '600' },
-  costFormula: { fontSize: 12, color: '#9CA3AF', marginTop: 3 },
+  costFormula: { fontSize: 11, color: '#9CA3AF', marginTop: 3 },
   costBadge: {
     backgroundColor: '#FFF0F0', borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 8,

@@ -157,29 +157,22 @@ const LOGIN_CHECK_SCRIPT = `
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FIX 3 — Best-effort email extraction to detect account mismatch.
-// Built as a factory function so expectedEmail is baked into the script string.
-// Only posts ACCOUNT_MISMATCH if an email IS found AND it differs from expected.
-// If no email is found in the DOM, this script does nothing (best-effort only).
 // ─────────────────────────────────────────────────────────────────────────────
 const buildEmailCheckScript = (expectedEmail) => `
   (function() {
     var expected = ${JSON.stringify((expectedEmail || '').toLowerCase())};
-    if (!expected) return;   // no expected email → nothing to compare
+    if (!expected) return;
 
     setTimeout(function() {
       try {
         var foundEmail = null;
         var emailRe = /[\\w.+-]+@[\\w.-]+\\.[a-zA-Z]{2,}/;
-
-        // 1. Check aria-label of Google Account button (sometimes contains email)
         var accountBtn = document.querySelector('[aria-label*="Google Account"]');
         if (accountBtn) {
           var lbl = accountBtn.getAttribute('aria-label') || '';
           var m = lbl.match(emailRe);
           if (m) foundEmail = m[0];
         }
-
-        // 2. Walk nearby account-related elements
         if (!foundEmail) {
           var candidates = document.querySelectorAll(
             '[class*="account"], [class*="Account"], [class*="profile"], ytd-account-item-renderer'
@@ -190,17 +183,6 @@ const buildEmailCheckScript = (expectedEmail) => `
             if (m2) { foundEmail = m2[0]; break; }
           }
         }
-
-        // 3. Scan header/topbar area for any email-looking text
-        if (!foundEmail) {
-          var header = document.querySelector('#masthead, #content, ytd-masthead');
-          if (header) {
-            var headerTxt = header.textContent || '';
-            var m3 = headerTxt.match(emailRe);
-            if (m3) foundEmail = m3[0];
-          }
-        }
-
         if (foundEmail && foundEmail.toLowerCase() !== expected) {
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'ACCOUNT_MISMATCH',
@@ -208,40 +190,28 @@ const buildEmailCheckScript = (expectedEmail) => `
             expectedEmail: expected
           }));
         }
-        // If foundEmail is null → no warning (best-effort, YouTube often hides it)
       } catch(e) {}
-    }, 3000);   // 3 s after login confirmed
+    }, 3000);
   })();
   true;
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Action-detection scripts (injected after timer ends)
+// Action-detection scripts
 // ─────────────────────────────────────────────────────────────────────────────
 const LIKE_DETECTION_SCRIPT = `
   (function() {
     var checkInterval = setInterval(function() {
-      var likeBtn = document.querySelector('button[aria-label*="like this video"]') ||
-                    document.querySelector('.YtLikeButtonViewModelHost button') ||
-                    document.querySelector('button.yt-spec-button-shape-next[aria-pressed="true"]');
-      if (likeBtn) {
-        likeBtn.addEventListener('click', function() {
-          setTimeout(function() {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'ACTION_COMPLETED', action: 'LIKE'
-            }));
-          }, 1000);
-        });
-        clearInterval(checkInterval);
-      }
-    }, 1000);
-    setTimeout(function() {
-      var likedBtn = document.querySelector('button[aria-label*="like this video"][aria-pressed="true"]') ||
-                     document.querySelector('.YtLikeButtonViewModelHost button[aria-pressed="true"]');
+      var likedBtn = document.querySelector(
+        'button[aria-label*="like this video"][aria-pressed="true"]'
+      ) || document.querySelector(
+        'button[aria-label*="Unlike"][aria-pressed="true"]'
+      );
       if (likedBtn) {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'ACTION_COMPLETED', action: 'LIKE'
         }));
+        clearInterval(checkInterval);
       }
     }, 2000);
   })();
@@ -251,29 +221,15 @@ const LIKE_DETECTION_SCRIPT = `
 const SUBSCRIBE_DETECTION_SCRIPT = `
   (function() {
     var checkInterval = setInterval(function() {
-      var subBtn = document.querySelector('button[aria-label*="Subscribe"]') ||
-                   document.querySelector('yt-button-shape button') ||
-                   document.querySelector('#subscribe-button button');
-      if (subBtn) {
-        subBtn.addEventListener('click', function() {
-          setTimeout(function() {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'ACTION_COMPLETED', action: 'SUBSCRIBE'
-            }));
-          }, 1500);
-        });
-        clearInterval(checkInterval);
-      }
-    }, 1000);
-    setTimeout(function() {
       var subscribedBtn = document.querySelector('button[aria-label*="Unsubscribe"]') ||
                           document.querySelector('[subscribed]');
       if (subscribedBtn) {
         window.ReactNativeWebView.postMessage(JSON.stringify({
           type: 'ACTION_COMPLETED', action: 'SUBSCRIBE'
         }));
+        clearInterval(checkInterval);
       }
-    }, 2000);
+    }, 1000);
   })();
   true;
 `;
@@ -307,7 +263,7 @@ export default function YouTubeWebView({
   actionType,
   onReturnToApp,
   userEmail,
-  expectedEmail,   // FIX 3 — new prop; pass user.email from TaskDetailScreen
+  expectedEmail,
   reducedTimer,
 }) {
   const insets = useSafeAreaInsets();
@@ -315,11 +271,7 @@ export default function YouTubeWebView({
   const completedRef  = useRef(false);
   const toastTimerRef = useRef(null);
 
-  const dur = reducedTimer
-    ? 5
-    : actionType === 'watch'
-      ? (task?.watchTimeRequired ?? 60)
-      : (TASK_MIN_SECONDS[actionType] ?? 30);
+  const dur = reducedTimer ? 5 : (actionType === 'watch' ? (task?.watchTimeRequired ?? 60) : (TASK_MIN_SECONDS[actionType] ?? 30));
 
   const [secondsLeft,     setSecondsLeft]     = useState(dur);
   const [toastMessage,    setToastMessage]     = useState('');
@@ -331,7 +283,6 @@ export default function YouTubeWebView({
   const [actionCompleted, setActionCompleted]  = useState(false);
   const [ytLoggedIn,      setYtLoggedIn]       = useState(false);
   const [loginCheckFinished, setLoginCheckFinished] = useState(false);
-  // FIX 3 — account mismatch warning state
   const [mismatchWarning, setMismatchWarning]  = useState('');
 
   const showToast = (msg, duration = 3000) => {
@@ -341,54 +292,35 @@ export default function YouTubeWebView({
     toastTimerRef.current = setTimeout(() => setToastVisible(false), duration);
   };
 
-  // ── Message handler ──────────────────────────────────────────────────────
   const handleWebViewMessage = (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
-
-      // ── Login status ──
       if (data.type === 'LOGIN_STATUS') {
-        console.log('LOGIN_STATUS received:', data);
         if (data.loggedIn) {
           setYtLoggedIn(true);
           setLoginCheckFinished(true);
           setTimerStarted(true);
           webViewRef.current?.injectJavaScript(LOCK_SCRIPT);
-          // FIX 3 — inject email check 3 s after login confirmed
-          const emailScript = buildEmailCheckScript(expectedEmail || userEmail || '');
-          webViewRef.current?.injectJavaScript(emailScript);
+          webViewRef.current?.injectJavaScript(buildEmailCheckScript(expectedEmail || userEmail || ''));
         } else {
           setYtLoggedIn(false);
-          // Only mark check finished if it's the final attempt
           if (data.finalCheck) {
              setLoginCheckFinished(true);
              webViewRef.current?.injectJavaScript(UNLOCK_SCRIPT);
-             if (actionType !== 'watch') {
-               showToast('Please log into YouTube first to complete this task');
-             }
+             if (actionType !== 'watch') showToast('Please log into YouTube first');
           }
         }
       }
-
-      // ── Action completed ──
       if (data.type === 'ACTION_COMPLETED') {
         setActionCompleted(true);
         showToast('✅ Action detected! Tap "Return to App" to claim your coins.');
       }
-
-      // ── FIX 3 — Account mismatch warning (non-blocking) ──
       if (data.type === 'ACCOUNT_MISMATCH') {
-        const { foundEmail, expectedEmail: exp } = data;
-        const warningMsg =
-          `⚠️ You're signed into YouTube as ${foundEmail}.\n` +
-          `Switch to ${exp} for this to count, or your action may not be verified correctly.`;
-        setMismatchWarning(warningMsg);
-        console.warn('ACCOUNT_MISMATCH:', data);
+        setMismatchWarning(`⚠️ You're signed into YouTube as ${data.foundEmail}.`);
       }
     } catch(e) {}
   };
 
-  // ── Timer complete ───────────────────────────────────────────────────────
   const handleTimerComplete = async () => {
     if (completedRef.current) return;
     completedRef.current = true;
@@ -400,7 +332,6 @@ export default function YouTubeWebView({
     }
   };
 
-  // ── Countdown ticker ────────────────────────────────────────────────────
   useEffect(() => {
     const interval = setInterval(() => {
       if (!timerStarted || timerPausedRef.current) return;
@@ -416,244 +347,104 @@ export default function YouTubeWebView({
     return () => clearInterval(interval);
   }, [timerStarted]);
 
-  // ── Inject action-detection scripts once timer ends ─────────────────────
   useEffect(() => {
     if (!timerDone) return;
-    if      (actionType === 'like')      webViewRef.current?.injectJavaScript(LIKE_DETECTION_SCRIPT);
+    if (actionType === 'like') webViewRef.current?.injectJavaScript(LIKE_DETECTION_SCRIPT);
     else if (actionType === 'subscribe') webViewRef.current?.injectJavaScript(SUBSCRIBE_DETECTION_SCRIPT);
-    else if (actionType === 'comment')   webViewRef.current?.injectJavaScript(COMMENT_DETECTION_SCRIPT);
+    else if (actionType === 'comment') webViewRef.current?.injectJavaScript(COMMENT_DETECTION_SCRIPT);
   }, [timerDone]);
 
-  // ── Cleanup ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    return () => {
-      completedRef.current = false;
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    };
-  }, []);
-
-  // ── Fallback: assume logged in after 8 s (safety net) ───────────────────
   useEffect(() => {
     const fallback = setTimeout(() => {
       if (!timerStarted) {
-        console.log('Login check timeout - assuming logged in');
         setYtLoggedIn(true);
         setLoginCheckFinished(true);
         setTimerStarted(true);
       }
     }, 8000);
-    return () => clearTimeout(fallback);
+    return () => clearInterval(fallback);
   }, [timerStarted]);
 
   const progressPct = ((dur - secondsLeft) / dur) * 100;
+  const actionLabel = { subscribe: 'Subscribe', like: 'Like', comment: 'Comment' }[actionType] ?? '';
 
-  const actionLabel = {
-    subscribe: 'Subscribe',
-    like: 'Like',
-    comment: 'Comment',
-  }[actionType] ?? '';
+  const autoplayScript = `
+    (function() {
+      var v = document.querySelector('video');
+      if (v) {
+        v.autoplay = true;
+        v.play().catch(function() {});
+      }
+      var playBtn = document.querySelector('.ytp-play-button');
+      if (playBtn) playBtn.click();
+    })();
+  `;
 
-  // ── Render ───────────────────────────────────────────────────────────────
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" backgroundColor="#F3F4F6" />
-
-      {/* ── YouTube WebView ── */}
       <WebView
         ref={webViewRef}
-        source={{ uri: task.videoUrl }}
+        source={{ uri: task.videoUrl + (task.videoUrl.includes('?') ? '&' : '?') + 'autoplay=1' }}
         style={s.webview}
         javaScriptEnabled={true}
         domStorageEnabled={true}
         allowsInlineMediaPlayback={true}
         mediaPlaybackRequiresUserAction={false}
         scrollEnabled={false}
-        injectedJavaScript={LOCK_SCRIPT + '\n' + LOGIN_CHECK_SCRIPT}
+        injectedJavaScript={LOCK_SCRIPT + '\n' + LOGIN_CHECK_SCRIPT + '\n' + autoplayScript}
         injectedJavaScriptBeforeContentLoaded={LOCK_SCRIPT}
         userAgent="Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
         mixedContentMode="always"
-        originWhitelist={['*']}
         onMessage={handleWebViewMessage}
-        onNavigationStateChange={(navState) => {
-          const url = navState.url || '';
-          if (url.includes('accounts.google.com') || url.includes('google.com/signin')) {
-            timerPausedRef.current = true;
-            setTimerPaused(true);
-          } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
-            timerPausedRef.current = false;
-            setTimerPaused(false);
-            webViewRef.current?.injectJavaScript(LOGIN_CHECK_SCRIPT);
-            if (ytLoggedIn) setTimerStarted(true);
-          }
-        }}
+        onLoadEnd={() => webViewRef.current?.injectJavaScript(autoplayScript)}
       />
-
-      {/* ══════════════════════════════════════════════════════════
-          TIMER PHASE: overlay + floating bar
-      ══════════════════════════════════════════════════════════ */}
       {!timerDone && (
         <>
-          {/* Back / exit button */}
-          <TouchableOpacity
-            onPress={() => onReturnToApp({ success: false })}
-            style={s.backBtn}
-          >
-            <Text style={s.backBtnTxt}>✕</Text>
-          </TouchableOpacity>
-
-          {/* "Please sign in" banner — only if NOT logged in after all retries */}
-          {!ytLoggedIn && !timerStarted && loginCheckFinished && (
-            <View style={s.ytLoginBanner} pointerEvents="none">
-              <Text style={s.ytLoginBannerTxt}>⚠️ Please sign in to YouTube with:</Text>
-              <Text style={s.ytLoginEmailTxt}>{userEmail || 'your Google account'}</Text>
-              <Text style={s.ytLoginSubTxt}>Use the same account in all sections</Text>
-            </View>
-          )}
-
-          {/* Signed-in email pill */}
-          {ytLoggedIn && !timerDone && (
-            <View style={s.accountPill} pointerEvents="none">
-              <Text style={s.accountPillTxt}>📧 Signed in as: {userEmail}</Text>
-            </View>
-          )}
-
-          {/* FIX 3 — Account mismatch warning banner (non-blocking) */}
+          <TouchableOpacity onPress={() => onReturnToApp({ success: false })} style={s.backBtn}><Text style={s.backBtnTxt}>✕</Text></TouchableOpacity>
           {!!mismatchWarning && (
-            <TouchableOpacity
-              style={s.mismatchBanner}
-              onPress={() => setMismatchWarning('')}
-              activeOpacity={0.85}
-            >
+            <TouchableOpacity style={s.mismatchBanner} onPress={() => setMismatchWarning('')}>
               <Text style={s.mismatchBannerTxt}>{mismatchWarning}</Text>
-              <Text style={s.mismatchDismiss}>Tap to dismiss</Text>
             </TouchableOpacity>
           )}
-
-          {/* FIX 1 — Transparent touch blocker.
-              We want this to render IMMEDIATELY so touches are blocked
-              even before the webview finishes loading. */}
-          <TouchableOpacity
-            activeOpacity={1}
-            pointerEvents={!timerDone ? 'auto' : 'none'}
-            onPress={() => {
-              if (!timerStarted) {
-                showToast('Please wait for the video to load…');
-              } else if (timerPaused) {
-                showToast('Timer paused — sign in to YouTube to continue.');
-              } else {
-                const msgs = {
-                  watch:     'Watch the full video to earn coins',
-                  subscribe: 'Subscribe to the channel to earn coins',
-                  like:      'Like the video to earn coins',
-                  comment:   'Comment on the video to earn coins',
-                };
-                showToast(msgs[actionType] || 'Complete the task to earn coins');
-              }
-            }}
-            style={[s.lockOverlay, { bottom: Math.max(140, insets.bottom + 8 + 100) }]}
-          />
-
-          {/* FIX 1 — Floating timer bar raised to safe bottom */}
+          <TouchableOpacity activeOpacity={1} style={[s.lockOverlay, { bottom: Math.max(140, insets.bottom + 8 + 100) }]} />
           <View style={[s.timerBar, { bottom: insets.bottom + 8 }]}>
             <View style={s.timerBarRow}>
               <Text style={s.timerBarCoins}>🪙 {task.coinsReward} Coins</Text>
-              <Text style={s.timerBarTime}>
-                {timerPaused
-                  ? '⏳ Paused'
-                  : !timerStarted
-                  ? '⏳ Loading…'
-                  : `⏳ ${fmt(secondsLeft)} left`}
-              </Text>
+              <Text style={s.timerBarTime}>{timerPaused ? '⏳ Paused' : !timerStarted ? '⏳ Loading…' : `⏳ ${fmt(secondsLeft)} left`}</Text>
             </View>
-            {reducedTimer ? (
-              <Text style={s.timerBarHint}>⚡ Quick verify — 5 seconds only!</Text>
-            ) : (
-              <>
-                {actionType === 'watch'     && <Text style={s.timerBarHint}>Watch the full video to earn coins</Text>}
-                {actionType === 'subscribe' && <Text style={s.timerBarHint}>Subscribe to the channel to earn coins</Text>}
-                {actionType === 'like'      && <Text style={s.timerBarHint}>Like the video to earn coins</Text>}
-                {actionType === 'comment'   && <Text style={s.timerBarHint}>Comment on the video to earn coins</Text>}
-              </>
-            )}
-            <View style={s.progressTrack}>
-              <View style={[s.progressFill, { width: timerStarted ? `${progressPct}%` : '0%' }]} />
-            </View>
+            <View style={s.progressTrack}><View style={[s.progressFill, { width: timerStarted ? `${progressPct}%` : '0%' }]} /></View>
           </View>
         </>
       )}
-
-      {/* ══════════════════════════════════════════════════════════
-          POST-TIMER PHASE — overlay gone, small action pill only
-      ══════════════════════════════════════════════════════════ */}
       {timerDone && (
         <>
-          <TouchableOpacity
-            onPress={async () => {
-              if (userEmail && task?.id) {
-                await markTimerCompleted(userEmail, task.id);
-              }
-              onReturnToApp({ success: false });
-            }}
-            style={s.backBtn}
-          >
-            <Text style={s.backBtnTxt}>✕</Text>
-          </TouchableOpacity>
-
+          <TouchableOpacity onPress={() => onReturnToApp({ success: false })} style={s.backBtn}><Text style={s.backBtnTxt}>✕</Text></TouchableOpacity>
           <View style={[s.returnPill, { bottom: insets.bottom + 8 }]}>
-            <View style={[s.statusBadge, actionCompleted && s.statusBadgeDone]}>
-              <Text style={s.statusBadgeTxt}>
-                {actionCompleted ? `✅ ${actionLabel} done!` : `⏳ ${actionLabel} first…`}
-              </Text>
-            </View>
-
-            <TouchableOpacity
-              style={[s.returnBtn, actionCompleted ? s.returnBtnActive : s.returnBtnGray]}
-              onPress={() => {
-                if (actionCompleted) {
-                  onReturnToApp({ success: true, actionVerified: true });
-                } else {
-                  showToast(
-                    `Action incomplete! You must ${actionLabel.toLowerCase()} first to claim your coins.`,
-                    4000,
-                  );
-                }
-              }}
-            >
-              <Text style={s.returnBtnTxt}>Return to App</Text>
-            </TouchableOpacity>
+            <View style={[s.statusBadge, actionCompleted && s.statusBadgeDone]}><Text style={s.statusBadgeTxt}>{actionCompleted ? `✅ ${actionLabel} done!` : `⏳ ${actionLabel} first…`}</Text></View>
+            <TouchableOpacity style={[s.returnBtn, actionCompleted ? s.returnBtnActive : s.returnBtnGray]} onPress={() => {
+              if (actionCompleted) { onReturnToApp({ success: true, actionVerified: true }); }
+              else { showToast('Action incomplete!', 4000); }
+            }}><Text style={s.returnBtnTxt}>Return to App</Text></TouchableOpacity>
           </View>
         </>
       )}
-
       <ToastPill message={toastMessage} visible={toastVisible} />
     </View>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Styles
-// ─────────────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   webview:   { flex: 1 },
+backBtnTxt: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
 
-  // ── Back button ────────────────────────────────────────────────────────────
-  backBtn: {
-    position: 'absolute', top: 16, left: 16, zIndex: 1001,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    width: 36, height: 36, borderRadius: 18,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  backBtnTxt: { color: '#FFF', fontSize: 18, fontWeight: 'bold' },
-
-  // ── FIX 1: lockOverlay bottom raised to match timer bar ─────────────
   lockOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0,
     zIndex: 999,
     backgroundColor: 'transparent',
   },
 
-  // ── FIX 1: timerBar raised ──────────────────
   timerBar: {
     position: 'absolute', left: 16, right: 16,
     backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16,

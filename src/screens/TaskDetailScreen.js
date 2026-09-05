@@ -93,13 +93,100 @@ export default function TaskDetailScreen({ route, navigation }) {
       }
       return;
     }
+
+    // ── Like: YouTube API is the PRIMARY verifier ────────────────────────────
+    if (taskType === 'like') {
+      // DOM detection is only a helper hint — we always re-verify via API
+      if (!actionVerified) {
+        Alert.alert(
+          'Action Incomplete',
+          'You must like the video to earn coins.',
+          [{ text: 'Go Back and Like', style: 'cancel' }],
+        );
+        return;
+      }
+
+      setVerifying(true);
+      try {
+        // 1. Get a fresh, non-expired access token
+        const accessToken = await getFreshAccessToken();
+        if (!accessToken) {
+          Alert.alert(
+            'Authentication Error',
+            'Please sign out and sign in again to verify your action.',
+          );
+          return;
+        }
+
+        // 2. Extract the video ID from the task URL
+        const videoUrlMatch = task.videoUrl?.match(
+          /(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/,
+        );
+        const videoId = videoUrlMatch?.[1];
+        if (!videoId) {
+          // Can't determine video ID — fall back to DOM detection
+          console.warn('Could not extract video ID from URL, using DOM detection');
+          await grantRewards();
+          if (autoPlayEnabled) {
+            setShowAutoplayOverlay(true);
+          } else {
+            navigation.navigate('MainTabs', { screen: targetTab });
+          }
+          return;
+        }
+
+        // 3. Call YouTube API to confirm myRating=like
+        const apiUrl =
+          `https://www.googleapis.com/youtube/v3/videos` +
+          `?part=snippet&myRating=like&id=${videoId}`;
+
+        const response = await fetch(apiUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        if (response.status === 401) {
+          Alert.alert(
+            'Session Expired',
+            'Please sign out and sign in again to verify your action.',
+          );
+          return;
+        }
+
+        const json = await response.json();
+        const likeConfirmed =
+          Array.isArray(json?.items) && json.items.length > 0;
+
+        if (!likeConfirmed) {
+          Alert.alert(
+            'Like Not Detected',
+            'Please like the video first before returning to app.',
+            [{ text: 'Go Back and Like', style: 'cancel' }],
+          );
+          return;
+        }
+
+        // 4. API confirmed — award coins
+        await grantRewards();
+        if (autoPlayEnabled) {
+          setShowAutoplayOverlay(true);
+        } else {
+          navigation.navigate('MainTabs', { screen: targetTab });
+        }
+      } catch (e) {
+        console.error('Like API verification failed:', e);
+        Alert.alert('Error', 'Failed to verify like. Please try again.');
+      } finally {
+        setVerifying(false);
+      }
+      return;
+    }
     
-    // For like/subscribe/comment: check actionVerified
+    // For subscribe/comment: check actionVerified (DOM detection)
     if (!actionVerified) {
       Alert.alert(
         'Action Incomplete',
         `You must ${taskType} the video/channel to earn coins.`,
-        [{ text: 'Go Back and Complete', style: 'cancel' }]
+        [{ text: 'Go Back and Complete', style: 'cancel' }],
       );
       return;
     }
@@ -107,11 +194,7 @@ export default function TaskDetailScreen({ route, navigation }) {
     // Action was verified by DOM detection
     setVerifying(true);
     try {
-      await addCoins(task.coinsReward, `${taskType} reward`);
-      await updateCampaignProgress(task.id);
-      
-      await markTaskCompleted(user.email, task.id, taskType);
-      
+      await grantRewards();
       if (autoPlayEnabled) {
         setShowAutoplayOverlay(true);
       } else {
