@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, StatusBar, Alert, ActivityIndicator, Text } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, StyleSheet, StatusBar, Alert, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
 import { Colors } from '../theme/colors';
 import YouTubeWebView from '../components/YouTubeWebView';
 import { useCoins } from '../context/CoinContext';
@@ -10,6 +10,14 @@ import AutoplayCountdown from '../components/AutoplayCountdown';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 
+// ─── DEV FLAG ─────────────────────────────────────────────────────────────────
+// Set to true to test the 401 → token-refresh → retry flow.
+// The FIRST API call of each verification will use "expired_token" to
+// force a 401. The app must log "[Token] 401 - refreshing" then retry.
+// Remove this flag (and its usages below) after confirming the flow works.
+const SIMULATE_EXPIRED_TOKEN = false;
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Map task type → correct tab name defined in AppNavigator.js
 const TASK_TAB_MAP = {
   watch:     'View',
@@ -18,23 +26,46 @@ const TASK_TAB_MAP = {
   comment:   'Comment',
 };
 
+// Helper: show a "session expired" alert with a Sign-In button that triggers
+// navigation back to the Auth screen. Call this instead of any per-action
+// "Authentication Error" alert.
+const showSessionExpiredAlert = (navigation) => {
+  Alert.alert(
+    'Session Expired',
+    'Your Google session expired. Please sign in again.',
+    [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign In',
+        onPress: () => navigation.reset({ index: 0, routes: [{ name: 'Auth' }] }),
+      },
+    ],
+  );
+};
+
 export default function TaskDetailScreen({ route, navigation }) {
   const { task, taskType, autoPlay: initialAutoPlay } = route.params;
   const { addCoins } = useCoins();
   const { user } = useAuth();
 
   // Always fetch a fresh OAuth token before any YouTube API call.
-  // The token stored in AuthContext expires after ~1 hour, causing 401 errors.
+  // Returns the access token string, or null if the Google session has expired.
+  // NEVER falls back to the stale token stored in AuthContext state.
   const getFreshAccessToken = async () => {
     try {
       const tokens = await GoogleSignin.getTokens();
-      console.log('Fresh token obtained:', tokens.accessToken ? 'SUCCESS' : 'FAILED');
-      return tokens.accessToken;
+      const tok = tokens?.accessToken ?? null;
+      console.log('[Token] getFreshAccessToken:', tok ? 'SUCCESS' : 'EMPTY');
+      return tok;
     } catch (error) {
-      console.warn('Failed to get fresh token, using stored token:', error);
-      return user?.accessToken;
+      console.warn('[Token] GoogleSignin.getTokens() threw — session likely expired:', error?.message);
+      return null; // Caller must show session-expired UI
     }
   };
+
+  // Tracks whether the first API call of the current verification has fired
+  // (used by SIMULATE_EXPIRED_TOKEN to poison only the first call).
+  const simulateDoneRef = useRef(false);
   
   const [currentIndex, setCurrentIndex] = useState(0);
   const [verifying, setVerifying] = useState(false);
@@ -43,13 +74,18 @@ export default function TaskDetailScreen({ route, navigation }) {
   const [showAutoplayOverlay, setShowAutoplayOverlay] = useState(false);
   const [appHandle, setAppHandle] = useState(null); // @handle from YouTube channels API
 
-  // Fetch the app user's YouTube @handle once so we can compare with the WebView identity
+  // Fetch the app user's YouTube @handle once so we can compare with the WebView identity.
+  // Always uses getFreshAccessToken() — never the stale cached token.
   useEffect(() => {
-    if (!user?.accessToken) return;
+    if (!user) return;
     (async () => {
       try {
-        const tokens = await GoogleSignin.getTokens().catch(() => null);
-        const token = tokens?.accessToken || user.accessToken;
+        const token = await getFreshAccessToken();
+        if (!token) {
+          console.warn('[Identity] No token available for channel lookup');
+          setAppHandle(user?.email || '');
+          return;
+        }
         const res = await fetch(
           'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
           { headers: { Authorization: `Bearer ${token}` } }
@@ -65,7 +101,7 @@ export default function TaskDetailScreen({ route, navigation }) {
         setAppHandle(user?.email || '');
       }
     })();
-  }, [user?.accessToken]);
+  }, [user?.email]);
 
   useEffect(() => {
     (async () => {
@@ -100,6 +136,9 @@ export default function TaskDetailScreen({ route, navigation }) {
   const handleReturnToApp = async ({ success, actionVerified, webViewVideoId, timerStartedAt }) => {
     const targetTab = TASK_TAB_MAP[taskType] ?? 'View';
 
+    // [Return] Diagnostic log — remove after confirming fix
+    console.log(`[Return] handleReturnToApp called | taskType: ${taskType} | success: ${success} | actionVerified: ${actionVerified}`);
+
     if (!success) {
       navigation.navigate('MainTabs', { screen: targetTab });
       return;
@@ -121,25 +160,16 @@ export default function TaskDetailScreen({ route, navigation }) {
 
     // ── Like: YouTube API is the PRIMARY verifier ────────────────────────────
     if (taskType === 'like') {
-      // DOM detection is only a helper hint — we always re-verify via API
-      if (!actionVerified) {
-        Alert.alert(
-          'Action Incomplete',
-          'You must like the video to earn coins.',
-          [{ text: 'Go Back and Like', style: 'cancel' }],
-        );
-        return;
-      }
+      // [Return] DOM detection (actionVerified) is only a hint — always verify via API
+      console.log(`[Return] like branch | actionVerified: ${actionVerified}`);
 
       setVerifying(true);
+      simulateDoneRef.current = false; // reset for this verification
       try {
         // 1. Get a fresh, non-expired access token
         let accessToken = await getFreshAccessToken();
         if (!accessToken) {
-          Alert.alert(
-            'Authentication Error',
-            'Please sign out and sign in again to verify your action.',
-          );
+          showSessionExpiredAlert(navigation);
           return;
         }
 
@@ -173,18 +203,25 @@ export default function TaskDetailScreen({ route, navigation }) {
           if (attempt > 1) {
             console.log(`[LikeVerify] Retrying (attempt ${attempt}/${MAX_ATTEMPTS}) after ${RETRY_DELAY_MS}ms...`);
             await sleep(RETRY_DELAY_MS);
-            try {
-              const refreshed = await getFreshAccessToken();
-              if (refreshed) accessToken = refreshed;
-            } catch (_) {}
+            const refreshed = await getFreshAccessToken();
+            if (refreshed) accessToken = refreshed;
           }
 
           // 3. Call YouTube API to check rating
+          // SIMULATE_EXPIRED_TOKEN: poison the first call's token to force a 401
           const apiUrl = `https://www.googleapis.com/youtube/v3/videos/getRating?id=${videoId}`;
+          const tokenForCall = (SIMULATE_EXPIRED_TOKEN && !simulateDoneRef.current)
+            ? 'expired_token'
+            : accessToken;
+          if (SIMULATE_EXPIRED_TOKEN && !simulateDoneRef.current) {
+            console.log('[Token] SIMULATE_EXPIRED_TOKEN: using poisoned token for first like call');
+            simulateDoneRef.current = true;
+          }
+
           let response;
           try {
             response = await fetch(apiUrl, {
-              headers: { Authorization: `Bearer ${accessToken}` },
+              headers: { Authorization: `Bearer ${tokenForCall}` },
             });
           } catch (netErr) {
             console.warn('[LikeVerify] Network error:', netErr?.message);
@@ -196,11 +233,10 @@ export default function TaskDetailScreen({ route, navigation }) {
           console.log(`[LikeVerify] attempt ${attempt} HTTP:`, lastHttpStatus);
 
           if (lastHttpStatus === 401) {
+            console.log('[Token] 401 - refreshing');
             if (attempt < MAX_ATTEMPTS) {
-              try {
-                const refreshed = await getFreshAccessToken();
-                if (refreshed) accessToken = refreshed;
-              } catch (_) {}
+              const refreshed = await getFreshAccessToken();
+              if (refreshed) accessToken = refreshed;
               continue;
             } else {
               hardAuthFailure = true;
@@ -238,10 +274,7 @@ export default function TaskDetailScreen({ route, navigation }) {
         console.log('[LikeVerify] likeConfirmed:', likeConfirmed, '| lastHttpStatus:', lastHttpStatus, '| apiError:', apiError, '| hardAuthFailure:', hardAuthFailure);
 
         if (hardAuthFailure) {
-          Alert.alert(
-            'Session Expired',
-            'Please sign out and sign in again to verify your action.',
-          );
+          showSessionExpiredAlert(navigation);
           return;
         }
 
@@ -283,24 +316,16 @@ export default function TaskDetailScreen({ route, navigation }) {
     
     // ── Subscribe: verify via YouTube Subscriptions API ─────────────────────
     if (taskType === 'subscribe') {
-      if (!actionVerified) {
-        Alert.alert(
-          'Action Incomplete',
-          'You must subscribe to the channel to earn coins.',
-          [{ text: 'Go Back and Subscribe', style: 'cancel' }],
-        );
-        return;
-      }
+      // [Return] DOM detection (actionVerified) is only a hint — always verify via API
+      console.log(`[Return] subscribe branch | actionVerified: ${actionVerified}`);
 
       setVerifying(true);
+      simulateDoneRef.current = false; // reset for this verification
       try {
         // 1. Get a fresh OAuth token
-        const accessToken = await getFreshAccessToken();
+        let accessToken = await getFreshAccessToken();
         if (!accessToken) {
-          Alert.alert(
-            'Authentication Error',
-            'Please sign out and sign in again to verify your action.',
-          );
+          showSessionExpiredAlert(navigation);
           return;
         }
 
@@ -334,22 +359,91 @@ export default function TaskDetailScreen({ route, navigation }) {
           return;
         }
 
-        // 4. Check if the user is subscribed to that channel
-        const subRes = await fetch(
-          `https://www.googleapis.com/youtube/v3/subscriptions?part=snippet&mine=true&forChannelId=${channelId}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } },
-        );
+        // 4. Check if the user is subscribed to that channel (with 401 retry)
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        const MAX_SUB_ATTEMPTS = 3;
+        const RETRY_DELAY_MS = 2000;
 
-        if (subRes.status === 401) {
-          Alert.alert(
-            'Session Expired',
-            'Please sign out and sign in again to verify your subscription.',
-          );
+        let isSubscribed = false;
+        let hardAuthFailure = false;
+        let apiError = null;
+        let lastHttpStatus = null;
+
+        for (let attempt = 1; attempt <= MAX_SUB_ATTEMPTS; attempt++) {
+          if (attempt > 1) {
+            console.log(`[SubVerify] Retrying (attempt ${attempt}/${MAX_SUB_ATTEMPTS}) after ${RETRY_DELAY_MS}ms...`);
+            await sleep(RETRY_DELAY_MS);
+            const refreshed = await getFreshAccessToken();
+            if (refreshed) accessToken = refreshed;
+          }
+
+          // SIMULATE_EXPIRED_TOKEN: poison first call
+          const tokenForCall = (SIMULATE_EXPIRED_TOKEN && !simulateDoneRef.current)
+            ? 'expired_token'
+            : accessToken;
+          if (SIMULATE_EXPIRED_TOKEN && !simulateDoneRef.current) {
+            console.log('[Token] SIMULATE_EXPIRED_TOKEN: using poisoned token for first subscribe call');
+            simulateDoneRef.current = true;
+          }
+
+          let subRes;
+          try {
+            subRes = await fetch(
+              `https://www.googleapis.com/youtube/v3/subscriptions?part=snippet&mine=true&forChannelId=${channelId}`,
+              { headers: { Authorization: `Bearer ${tokenForCall}` } },
+            );
+          } catch (netErr) {
+            console.warn('[SubVerify] Network error:', netErr?.message);
+            apiError = 'network';
+            continue;
+          }
+
+          lastHttpStatus = subRes.status;
+          console.log(`[SubVerify] attempt ${attempt} HTTP:`, lastHttpStatus);
+
+          if (lastHttpStatus === 401) {
+            console.log('[Token] 401 - refreshing');
+            if (attempt < MAX_SUB_ATTEMPTS) {
+              const refreshed = await getFreshAccessToken();
+              if (refreshed) accessToken = refreshed;
+              continue;
+            } else {
+              hardAuthFailure = true;
+              break;
+            }
+          }
+
+          if (lastHttpStatus === 403 || lastHttpStatus >= 500) {
+            let errBody = '';
+            try { errBody = await subRes.text(); } catch (_) {}
+            console.warn('[SubVerify] Non-2xx response:', lastHttpStatus, errBody.slice(0, 200));
+            apiError = lastHttpStatus;
+            break;
+          }
+
+          const subJson = await subRes.json();
+          if (subJson?.error) {
+            console.warn('[SubVerify] API error body:', JSON.stringify(subJson.error));
+            apiError = subJson.error?.code ?? 'api_error';
+            break;
+          }
+          isSubscribed = (subJson?.pageInfo?.totalResults ?? 0) > 0;
+          break; // success
+        }
+
+        if (hardAuthFailure) {
+          showSessionExpiredAlert(navigation);
           return;
         }
 
-        const subJson = await subRes.json();
-        const isSubscribed = (subJson?.pageInfo?.totalResults ?? 0) > 0;
+        if (apiError !== null) {
+          Alert.alert(
+            'Couldn\'t Verify Right Now',
+            'There was a problem reaching YouTube. Please try again.',
+            [{ text: 'Try Again', style: 'cancel' }],
+          );
+          return;
+        }
 
         if (!isSubscribed) {
           Alert.alert(
@@ -366,8 +460,12 @@ export default function TaskDetailScreen({ route, navigation }) {
         await grantRewards();
         navigation.navigate('MainTabs', { screen: targetTab });
       } catch (e) {
-        console.error('Subscribe API verification failed:', e);
-        Alert.alert('Error', 'Failed to verify subscription. Please try again.');
+        console.error('[SubVerify] Unexpected exception:', e?.message, e);
+        Alert.alert(
+          'Couldn\'t Verify Right Now',
+          'There was a problem reaching YouTube. Please try again.',
+          [{ text: 'Try Again', style: 'cancel' }],
+        );
       } finally {
         setVerifying(false);
       }
@@ -376,14 +474,9 @@ export default function TaskDetailScreen({ route, navigation }) {
 
     // ── Comment: verify via YouTube commentThreads API ───────────────────────
     if (taskType === 'comment') {
-      if (!actionVerified) {
-        Alert.alert(
-          'Action Incomplete',
-          'Please write and submit your comment first to earn coins.',
-          [{ text: 'Go Back and Comment', style: 'cancel' }],
-        );
-        return;
-      }
+      // [Return] DOM detection (actionVerified) is only a hint — always verify via API.
+      // The overlay is shown immediately so the user sees feedback during the 4×3 s retry window.
+      console.log(`[Return] comment branch | actionVerified: ${actionVerified}`);
 
       // Record the moment the timer STARTED (from WebView) so old comments cannot be reused.
       // We apply a 60-second grace window on timerStartedAt (not the finish time) per spec Fix #5.
@@ -391,6 +484,7 @@ export default function TaskDetailScreen({ route, navigation }) {
       const timerFinishedAt = new Date().toISOString();
 
       setVerifying(true);
+      simulateDoneRef.current = false; // reset for this verification
       try {
         // ── 1. Fresh access token ─────────────────────────────────────────────
         let accessToken = await getFreshAccessToken();
@@ -402,7 +496,7 @@ export default function TaskDetailScreen({ route, navigation }) {
         console.log('[CommentVerify] user.ytChannelId (cached):', user?.ytChannelId);
 
         if (!accessToken) {
-          Alert.alert('Authentication Error', 'Please sign out and sign in again to verify your comment.');
+          showSessionExpiredAlert(navigation);
           return;
         }
 
@@ -483,10 +577,19 @@ export default function TaskDetailScreen({ route, navigation }) {
               `?part=snippet&videoId=${videoId}&order=time&maxResults=50`;
             if (pageToken) url += `&pageToken=${pageToken}`;
 
+            // SIMULATE_EXPIRED_TOKEN: poison only the very first fetch
+            const tokenForCall = (SIMULATE_EXPIRED_TOKEN && !simulateDoneRef.current)
+              ? 'expired_token'
+              : accessToken;
+            if (SIMULATE_EXPIRED_TOKEN && !simulateDoneRef.current) {
+              console.log('[Token] SIMULATE_EXPIRED_TOKEN: using poisoned token for first comment call');
+              simulateDoneRef.current = true;
+            }
+
             let commentRes;
             try {
               commentRes = await fetch(url, {
-                headers: { Authorization: `Bearer ${accessToken}` },
+                headers: { Authorization: `Bearer ${tokenForCall}` },
               });
             } catch (netErr) {
               console.warn('[CommentVerify] Network error:', netErr?.message);
@@ -500,12 +603,10 @@ export default function TaskDetailScreen({ route, navigation }) {
             console.log(`[CommentVerify] attempt ${attempt} page ${page + 1} HTTP:`, lastHttpStatus);
 
             if (lastHttpStatus === 401) {
+              console.log('[Token] 401 - refreshing');
               if (attempt < MAX_ATTEMPTS) {
-                // Force token refresh then retry the whole attempt loop
-                try {
-                  const refreshed = await getFreshAccessToken();
-                  if (refreshed) accessToken = refreshed;
-                } catch (_) {}
+                const refreshed = await getFreshAccessToken();
+                if (refreshed) accessToken = refreshed;
                 break; // break page loop, let attempt loop retry
               } else {
                 hardAuthFailure = true;
@@ -595,7 +696,7 @@ export default function TaskDetailScreen({ route, navigation }) {
 
         // ── 6. Outcome ────────────────────────────────────────────────────────
         if (hardAuthFailure) {
-          Alert.alert('Session Expired', 'Please sign out and sign in again to verify your comment.');
+          showSessionExpiredAlert(navigation);
           return;
         }
 
