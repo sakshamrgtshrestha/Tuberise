@@ -41,6 +41,31 @@ export default function TaskDetailScreen({ route, navigation }) {
   const [reducedTimer, setReducedTimer] = useState(false);
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(initialAutoPlay || false);
   const [showAutoplayOverlay, setShowAutoplayOverlay] = useState(false);
+  const [appHandle, setAppHandle] = useState(null); // @handle from YouTube channels API
+
+  // Fetch the app user's YouTube @handle once so we can compare with the WebView identity
+  useEffect(() => {
+    if (!user?.accessToken) return;
+    (async () => {
+      try {
+        const tokens = await GoogleSignin.getTokens().catch(() => null);
+        const token = tokens?.accessToken || user.accessToken;
+        const res = await fetch(
+          'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true',
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const json = await res.json();
+        const ch = json?.items?.[0];
+        const handle = ch?.snippet?.customUrl || null; // customUrl is the @handle (e.g. "@sak")
+        const channelId = ch?.id || null;
+        console.log('[Identity] App channel resolved — id:', channelId, '| customUrl (handle):', handle);
+        setAppHandle(handle || user?.email || '');
+      } catch (e) {
+        console.warn('[Identity] channels API failed:', e?.message);
+        setAppHandle(user?.email || '');
+      }
+    })();
+  }, [user?.accessToken]);
 
   useEffect(() => {
     (async () => {
@@ -72,7 +97,7 @@ export default function TaskDetailScreen({ route, navigation }) {
     }
   };
 
-  const handleReturnToApp = async ({ success, actionVerified }) => {
+  const handleReturnToApp = async ({ success, actionVerified, webViewVideoId, timerStartedAt }) => {
     const targetTab = TASK_TAB_MAP[taskType] ?? 'View';
 
     if (!success) {
@@ -109,7 +134,7 @@ export default function TaskDetailScreen({ route, navigation }) {
       setVerifying(true);
       try {
         // 1. Get a fresh, non-expired access token
-        const accessToken = await getFreshAccessToken();
+        let accessToken = await getFreshAccessToken();
         if (!accessToken) {
           Alert.alert(
             'Authentication Error',
@@ -120,31 +145,99 @@ export default function TaskDetailScreen({ route, navigation }) {
 
         // 2. Extract the video ID from the task URL
         const videoUrlMatch = task.videoUrl?.match(
-          /(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/,
+          /(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/,
         );
         const videoId = videoUrlMatch?.[1];
+
+        console.log('[LikeVerify] task.videoUrl:', task.videoUrl);
+        console.log('[LikeVerify] extracted task videoId:', videoId);
+        console.log('[LikeVerify] webViewVideoId:', webViewVideoId);
+
         if (!videoId) {
-          // Can't determine video ID — fall back to DOM detection
-          console.warn('Could not extract video ID from URL, using DOM detection');
+          console.warn('[LikeVerify] Could not extract video ID from URL, using DOM detection');
           await grantRewards();
-          if (autoPlayEnabled) {
-            setShowAutoplayOverlay(true);
-          } else {
-            navigation.navigate('MainTabs', { screen: targetTab });
-          }
+          navigation.navigate('MainTabs', { screen: targetTab });
           return;
         }
 
-        // 3. Call YouTube API to confirm myRating=like
-        const apiUrl =
-          `https://www.googleapis.com/youtube/v3/videos` +
-          `?part=snippet&myRating=like&id=${videoId}`;
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        const MAX_ATTEMPTS = 3;
+        const RETRY_DELAY_MS = 2000;
 
-        const response = await fetch(apiUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        let likeConfirmed = false;
+        let apiError = null;
+        let hardAuthFailure = false;
+        let lastHttpStatus = null;
 
-        if (response.status === 401) {
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          if (attempt > 1) {
+            console.log(`[LikeVerify] Retrying (attempt ${attempt}/${MAX_ATTEMPTS}) after ${RETRY_DELAY_MS}ms...`);
+            await sleep(RETRY_DELAY_MS);
+            try {
+              const refreshed = await getFreshAccessToken();
+              if (refreshed) accessToken = refreshed;
+            } catch (_) {}
+          }
+
+          // 3. Call YouTube API to check rating
+          const apiUrl = `https://www.googleapis.com/youtube/v3/videos/getRating?id=${videoId}`;
+          let response;
+          try {
+            response = await fetch(apiUrl, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+          } catch (netErr) {
+            console.warn('[LikeVerify] Network error:', netErr?.message);
+            apiError = 'network';
+            continue; // retry loop
+          }
+
+          lastHttpStatus = response.status;
+          console.log(`[LikeVerify] attempt ${attempt} HTTP:`, lastHttpStatus);
+
+          if (lastHttpStatus === 401) {
+            if (attempt < MAX_ATTEMPTS) {
+              try {
+                const refreshed = await getFreshAccessToken();
+                if (refreshed) accessToken = refreshed;
+              } catch (_) {}
+              continue;
+            } else {
+              hardAuthFailure = true;
+              break;
+            }
+          }
+
+          if (lastHttpStatus === 403 || lastHttpStatus >= 500) {
+            let errBody = '';
+            try { errBody = await response.text(); } catch (_) {}
+            console.warn('[LikeVerify] Non-2xx response:', lastHttpStatus, errBody.slice(0, 200));
+            apiError = lastHttpStatus;
+            break; // non-retryable
+          }
+
+          const json = await response.json();
+          console.log('[LikeVerify] response body:', JSON.stringify(json));
+          
+          if (json?.error) {
+            console.warn('[LikeVerify] API error body:', JSON.stringify(json.error));
+            apiError = json.error?.code ?? 'api_error';
+            break;
+          }
+
+          const rating = json?.items?.[0]?.rating;
+          console.log('[LikeVerify] rating returned:', rating);
+
+          if (rating === 'like') {
+            likeConfirmed = true;
+            break;
+          }
+          // If rating is 'none' or 'dislike', it will loop and retry
+        }
+
+        console.log('[LikeVerify] likeConfirmed:', likeConfirmed, '| lastHttpStatus:', lastHttpStatus, '| apiError:', apiError, '| hardAuthFailure:', hardAuthFailure);
+
+        if (hardAuthFailure) {
           Alert.alert(
             'Session Expired',
             'Please sign out and sign in again to verify your action.',
@@ -152,54 +245,404 @@ export default function TaskDetailScreen({ route, navigation }) {
           return;
         }
 
-        const json = await response.json();
-        const likeConfirmed =
-          Array.isArray(json?.items) && json.items.length > 0;
+        if (apiError !== null) {
+          Alert.alert(
+            'Couldn\'t Verify Right Now',
+            'There was a problem reaching YouTube. Please try again.',
+            [{ text: 'Try Again', style: 'cancel' }],
+          );
+          return;
+        }
 
         if (!likeConfirmed) {
           Alert.alert(
             'Like Not Detected',
-            'Please like the video first before returning to app.',
-            [{ text: 'Go Back and Like', style: 'cancel' }],
+            actionVerified
+              ? `YouTube shows this action under a different account than ${user?.email}. Tap Fix in the WebView to switch accounts, then try again.`
+              : 'Please like the video first before returning to app.',
+            [{ text: actionVerified ? 'OK' : 'Go Back and Like', style: 'cancel' }],
           );
           return;
         }
 
         // 4. API confirmed — award coins
         await grantRewards();
-        if (autoPlayEnabled) {
-          setShowAutoplayOverlay(true);
-        } else {
-          navigation.navigate('MainTabs', { screen: targetTab });
-        }
+        navigation.navigate('MainTabs', { screen: targetTab });
       } catch (e) {
-        console.error('Like API verification failed:', e);
-        Alert.alert('Error', 'Failed to verify like. Please try again.');
+        console.warn('[LikeVerify] Unexpected exception:', e?.message, e);
+        Alert.alert(
+          'Couldn\'t Verify Right Now',
+          'There was a problem reaching YouTube. Please try again.',
+          [{ text: 'Try Again', style: 'cancel' }],
+        );
       } finally {
         setVerifying(false);
       }
       return;
     }
     
-    // For subscribe/comment: check actionVerified (DOM detection)
-    if (!actionVerified) {
-      Alert.alert(
-        'Action Incomplete',
-        `You must ${taskType} the video/channel to earn coins.`,
-        [{ text: 'Go Back and Complete', style: 'cancel' }],
-      );
+    // ── Subscribe: verify via YouTube Subscriptions API ─────────────────────
+    if (taskType === 'subscribe') {
+      if (!actionVerified) {
+        Alert.alert(
+          'Action Incomplete',
+          'You must subscribe to the channel to earn coins.',
+          [{ text: 'Go Back and Subscribe', style: 'cancel' }],
+        );
+        return;
+      }
+
+      setVerifying(true);
+      try {
+        // 1. Get a fresh OAuth token
+        const accessToken = await getFreshAccessToken();
+        if (!accessToken) {
+          Alert.alert(
+            'Authentication Error',
+            'Please sign out and sign in again to verify your action.',
+          );
+          return;
+        }
+
+        // 2. Extract video ID from the task URL
+        const videoUrlMatch = task.videoUrl?.match(
+          /(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/,
+        );
+        const videoId = videoUrlMatch?.[1];
+
+        if (!videoId) {
+          // Can't determine video ID — fall back to DOM detection
+          console.warn('Could not extract video ID from URL, using DOM detection for subscribe');
+          await grantRewards();
+          navigation.navigate('MainTabs', { screen: targetTab });
+          return;
+        }
+
+        // 3. Get the channel ID from the video
+        const YOUTUBE_API_KEY = 'AIzaSyDSA7JUtKvAsOJ8rWLozvI2HISw8T3lA7o';
+        const videoRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${YOUTUBE_API_KEY}`,
+        );
+        const videoJson = await videoRes.json();
+        const channelId = videoJson?.items?.[0]?.snippet?.channelId;
+
+        if (!channelId) {
+          // Can't resolve channelId — trust DOM detection
+          console.warn('Could not resolve channelId, trusting DOM detection for subscribe');
+          await grantRewards();
+          navigation.navigate('MainTabs', { screen: targetTab });
+          return;
+        }
+
+        // 4. Check if the user is subscribed to that channel
+        const subRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/subscriptions?part=snippet&mine=true&forChannelId=${channelId}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+
+        if (subRes.status === 401) {
+          Alert.alert(
+            'Session Expired',
+            'Please sign out and sign in again to verify your subscription.',
+          );
+          return;
+        }
+
+        const subJson = await subRes.json();
+        const isSubscribed = (subJson?.pageInfo?.totalResults ?? 0) > 0;
+
+        if (!isSubscribed) {
+          Alert.alert(
+            'Not Subscribed',
+            actionVerified
+              ? `YouTube shows this action under a different account than ${user?.email}. Tap Fix in the WebView to switch accounts, then try again.`
+              : 'Please subscribe to the channel first before returning to the app.',
+            [{ text: actionVerified ? 'OK' : 'Go Back and Subscribe', style: 'cancel' }],
+          );
+          return;
+        }
+
+        // 5. Subscription confirmed — award coins
+        await grantRewards();
+        navigation.navigate('MainTabs', { screen: targetTab });
+      } catch (e) {
+        console.error('Subscribe API verification failed:', e);
+        Alert.alert('Error', 'Failed to verify subscription. Please try again.');
+      } finally {
+        setVerifying(false);
+      }
       return;
     }
-    
-    // Action was verified by DOM detection
+
+    // ── Comment: verify via YouTube commentThreads API ───────────────────────
+    if (taskType === 'comment') {
+      if (!actionVerified) {
+        Alert.alert(
+          'Action Incomplete',
+          'Please write and submit your comment first to earn coins.',
+          [{ text: 'Go Back and Comment', style: 'cancel' }],
+        );
+        return;
+      }
+
+      // Record the moment the timer STARTED (from WebView) so old comments cannot be reused.
+      // We apply a 60-second grace window on timerStartedAt (not the finish time) per spec Fix #5.
+      const timerStartedAtMs = timerStartedAt ? new Date(timerStartedAt).getTime() : null;
+      const timerFinishedAt = new Date().toISOString();
+
+      setVerifying(true);
+      try {
+        // ── 1. Fresh access token ─────────────────────────────────────────────
+        let accessToken = await getFreshAccessToken();
+
+        // ── TEMP DIAG 1 ───────────────────────────────────────────────────────
+        console.log('[CommentVerify] accessToken present:', !!accessToken);
+        console.log('[CommentVerify] user.displayName:', user?.displayName);
+        console.log('[CommentVerify] user.email (app login):', user?.email);
+        console.log('[CommentVerify] user.ytChannelId (cached):', user?.ytChannelId);
+
+        if (!accessToken) {
+          Alert.alert('Authentication Error', 'Please sign out and sign in again to verify your comment.');
+          return;
+        }
+
+        // ── 2. Video ID extraction ────────────────────────────────────────────
+        // Handles watch?v=, youtu.be/, /shorts/, and m.youtube.com/?v=
+        const videoUrlMatch = task.videoUrl?.match(
+          /(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/,
+        );
+        const videoId = videoUrlMatch?.[1];
+
+        // ── TEMP DIAG 2 ───────────────────────────────────────────────────────
+        console.log('[CommentVerify] task.videoUrl:', task.videoUrl);
+        console.log('[CommentVerify] extracted task videoId:', videoId);
+        console.log('[CommentVerify] webViewVideoId:', webViewVideoId);
+
+        if (!videoId) {
+          console.warn('[CommentVerify] Could not extract video ID, trusting DOM detection for comment');
+          await grantRewards();
+          navigation.navigate('MainTabs', { screen: targetTab });
+          return;
+        }
+
+        // ── 3. Resolve signed-in user's YouTube channelId ─────────────────────
+        // Prefer the channelId cached at sign-in time (user.ytChannelId).
+        // If it is missing (e.g. older session restored from AsyncStorage before
+        // this feature was added), fetch it now and log it.
+        let myChannelId = user?.ytChannelId ?? null;
+
+        if (!myChannelId) {
+          try {
+            const chRes = await fetch(
+              'https://www.googleapis.com/youtube/v3/channels?part=id&mine=true',
+              { headers: { Authorization: `Bearer ${accessToken}` } },
+            );
+            const chJson = await chRes.json();
+            myChannelId = chJson?.items?.[0]?.id ?? null;
+            console.log('[CommentVerify] channels.list (live) status:', chRes.status);
+          } catch (chErr) {
+            console.warn('[CommentVerify] channels.list failed:', chErr?.message);
+          }
+        }
+
+        // ── TEMP DIAG 3 ───────────────────────────────────────────────────────
+        console.log('[CommentVerify] myChannelId resolved:', myChannelId);
+        console.log('[CommentVerify] timerFinishedAt:', timerFinishedAt);
+
+        // ── 4. Helper: sleep ─────────────────────────────────────────────────
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        // ── 5. Retry loop (up to 4 attempts, 3 s apart) ──────────────────────
+        // New comments can take a few seconds to appear in the API.
+        const MAX_ATTEMPTS = 4;
+        const RETRY_DELAY_MS = 3000;
+
+        let commentFound = false;
+        let lastHttpStatus = null;
+        let apiError = null;       // set on 403 / 5xx / network error
+        let hardAuthFailure = false; // set on repeated 401
+
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          if (attempt > 1) {
+            console.log(`[CommentVerify] Retrying (attempt ${attempt}/${MAX_ATTEMPTS}) after ${RETRY_DELAY_MS}ms...`);
+            await sleep(RETRY_DELAY_MS);
+            // Refresh token on retry in case it expired mid-session
+            try {
+              const refreshed = await getFreshAccessToken();
+              if (refreshed) accessToken = refreshed;
+            } catch (_) { /* keep current token */ }
+          }
+
+          // Paginate up to 3 pages (order=time, maxResults=50)
+          let pageToken = undefined;
+          const MAX_PAGES = 3;
+
+          for (let page = 0; page < MAX_PAGES; page++) {
+            let url =
+              `https://www.googleapis.com/youtube/v3/commentThreads` +
+              `?part=snippet&videoId=${videoId}&order=time&maxResults=50`;
+            if (pageToken) url += `&pageToken=${pageToken}`;
+
+            let commentRes;
+            try {
+              commentRes = await fetch(url, {
+                headers: { Authorization: `Bearer ${accessToken}` },
+              });
+            } catch (netErr) {
+              console.warn('[CommentVerify] Network error:', netErr?.message);
+              apiError = 'network';
+              break; // break page loop; outer attempt loop will retry
+            }
+
+            lastHttpStatus = commentRes.status;
+
+            // ── TEMP DIAG 4 ────────────────────────────────────────────────
+            console.log(`[CommentVerify] attempt ${attempt} page ${page + 1} HTTP:`, lastHttpStatus);
+
+            if (lastHttpStatus === 401) {
+              if (attempt < MAX_ATTEMPTS) {
+                // Force token refresh then retry the whole attempt loop
+                try {
+                  const refreshed = await getFreshAccessToken();
+                  if (refreshed) accessToken = refreshed;
+                } catch (_) {}
+                break; // break page loop, let attempt loop retry
+              } else {
+                hardAuthFailure = true;
+                break;
+              }
+            }
+
+            if (lastHttpStatus === 403 || lastHttpStatus >= 500) {
+              let errBody = '';
+              try { errBody = await commentRes.text(); } catch (_) {}
+              console.warn('[CommentVerify] Non-2xx response:', lastHttpStatus, errBody.slice(0, 200));
+              apiError = lastHttpStatus;
+              break; // non-retryable (403 quota / 5xx server) — break page loop
+            }
+
+            const commentJson = await commentRes.json();
+
+            if (commentJson?.error) {
+              console.warn('[CommentVerify] API error body:', JSON.stringify(commentJson.error));
+              apiError = commentJson.error?.code ?? 'api_error';
+              break;
+            }
+
+            // ── TEMP DIAG 5 ────────────────────────────────────────────────
+            const items = commentJson?.items ?? [];
+            console.log(`[CommentVerify] page ${page + 1}: ${items.length} items, nextPageToken:`, commentJson?.nextPageToken ?? 'none');
+            if (page === 0 && attempt === 1) {
+              const first5 = items.slice(0, 5).map(item => ({
+                authorChannelId: item?.snippet?.topLevelComment?.snippet?.authorChannelId?.value,
+                authorDisplayName: item?.snippet?.topLevelComment?.snippet?.authorDisplayName,
+                publishedAt: item?.snippet?.topLevelComment?.snippet?.publishedAt,
+                text: (item?.snippet?.topLevelComment?.snippet?.textOriginal ?? '').slice(0, 60),
+              }));
+              console.log('[CommentVerify] first 5 items (attempt 1, page 1):', JSON.stringify(first5, null, 2));
+            }
+
+            // Match: authorChannelId === myChannelId AND publishedAt >= timerFinishedAt
+            for (const item of items) {
+              const authorChId = item?.snippet?.topLevelComment?.snippet?.authorChannelId?.value;
+              const publishedAt = item?.snippet?.topLevelComment?.snippet?.publishedAt ?? '';
+
+              // If we don't have myChannelId, fall back to display-name match
+              // and log loudly so we know to fix it.
+              let matched = false;
+              if (myChannelId) {
+                matched = authorChId === myChannelId;
+              } else {
+                const authorDisplayName = item?.snippet?.topLevelComment?.snippet?.authorDisplayName ?? '';
+                const userDisplayName = user?.displayName ?? '';
+                matched = userDisplayName && authorDisplayName.toLowerCase() === userDisplayName.toLowerCase();
+                if (matched) console.warn('[CommentVerify] Matched on display name (fallback) — channelId unavailable');
+              }
+
+              if (matched) {
+                // Gate (Fix #5): comment must be newer than timerStartedAt - 60 s.
+                // Using timerStartedAt (not timerFinishedAt) means a comment written any
+                // time after the timer began in the WebView will pass.
+                const publishedMs = publishedAt ? new Date(publishedAt).getTime() : 0;
+                const baseMs = timerStartedAtMs
+                  ? timerStartedAtMs - 60000
+                  : new Date(timerFinishedAt).getTime() - 60000;
+                if (publishedMs >= baseMs) {
+                  commentFound = true;
+                  console.log('[CommentVerify] Match found! authorChannelId:', authorChId, 'publishedAt:', publishedAt);
+                  break;
+                } else {
+                  console.log('[CommentVerify] Channel matched but comment is too old:', publishedAt,
+                              '< base:', new Date(baseMs).toISOString(),
+                              '(timerStartedAt:', timerStartedAt, ')');
+                }
+              }
+            }
+
+            if (commentFound) break;
+
+            pageToken = commentJson?.nextPageToken;
+            if (!pageToken) break; // no more pages
+          } // page loop
+
+          if (commentFound || hardAuthFailure || apiError === 403) break;
+          // For network / 5xx errors: retry. For 403 quota: give up (don't retry).
+          if (typeof apiError === 'number' && apiError === 403) break;
+        } // attempt loop
+
+        // ── TEMP DIAG 6 ──────────────────────────────────────────────────────
+        console.log('[CommentVerify] commentFound:', commentFound, '| lastHttpStatus:', lastHttpStatus, '| apiError:', apiError, '| hardAuthFailure:', hardAuthFailure);
+
+        // ── 6. Outcome ────────────────────────────────────────────────────────
+        if (hardAuthFailure) {
+          Alert.alert('Session Expired', 'Please sign out and sign in again to verify your comment.');
+          return;
+        }
+
+        if (apiError !== null) {
+          // 403 / 5xx / network — do NOT penalise user
+          Alert.alert(
+            'Couldn\'t Verify Right Now',
+            'There was a problem reaching YouTube. Please try again.',
+            [{ text: 'Try Again', style: 'cancel' }],
+          );
+          return;
+        }
+
+        if (!commentFound) {
+          // HTTP 200 was returned but no matching comment was found — genuine miss
+          Alert.alert(
+            'Comment Not Found',
+            actionVerified
+              ? `YouTube shows this action under a different account than ${user?.email}. Tap Fix in the WebView to switch accounts, then try again.`
+              : 'Please submit your comment on the video before returning to the app.',
+            [{ text: actionVerified ? 'OK' : 'Go Back and Comment', style: 'cancel' }],
+          );
+          return;
+        }
+
+        // Comment confirmed — award coins
+        await grantRewards();
+        navigation.navigate('MainTabs', { screen: targetTab });
+      } catch (e) {
+        // Unexpected exception — do NOT penalise user
+        console.warn('[CommentVerify] Unexpected exception:', e?.message, e);
+        Alert.alert(
+          'Couldn\'t Verify Right Now',
+          'There was a problem reaching YouTube. Please try again.',
+          [{ text: 'Try Again', style: 'cancel' }],
+        );
+      } finally {
+        setVerifying(false);
+      }
+      return;
+    }
+
+    // Fallback for any other action type
     setVerifying(true);
     try {
       await grantRewards();
-      if (autoPlayEnabled) {
-        setShowAutoplayOverlay(true);
-      } else {
-        navigation.navigate('MainTabs', { screen: targetTab });
-      }
+      navigation.navigate('MainTabs', { screen: targetTab });
     } catch(e) {
       Alert.alert('Error', 'Failed to award coins. Try again.');
     } finally {
@@ -258,8 +701,10 @@ export default function TaskDetailScreen({ route, navigation }) {
         onAutoAdvance={handleAutoAdvance}
         taskIndex={0}
         initialAutoPlay={initialAutoPlay}
+        autoPlayEnabled={autoPlayEnabled}
         userEmail={user?.email}
         expectedEmail={user?.email}
+        appHandle={appHandle}  // @handle fetched from YouTube channels API
         reducedTimer={reducedTimer}
       />
       {verifying && (
@@ -278,6 +723,7 @@ export default function TaskDetailScreen({ route, navigation }) {
           onCountdownEnd={handleLoadNextTask}
           onSkip={handleLoadNextTask}
           onStop={handleStopAutoplay}
+          duration={20}
         />
       )}
     </View>

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, StatusBar,
-  Switch, Image, Dimensions, ScrollView
+  Image, Dimensions, ScrollView
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,13 +10,12 @@ import { useAuth } from '../context/AuthContext';
 import { getActiveCampaignsForFeed } from '../services/campaignService';
 import { getCompletedCampaignIds } from '../services/completedTasksService';
 import SidebarDrawer from '../components/SidebarDrawer';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
 
 const { width: SW } = Dimensions.get('window');
 const SCREEN_H = Dimensions.get('window').height;
 const HEADER_H = 60;
 const INFO_CARD_H = 90;
-const TOGGLE_H = 48;
 const TAB_BAR_H = 60;
 const SAFE_AREA_TOP = 40;
 
@@ -31,29 +30,8 @@ export default function CommentScreen({ navigation }) {
   const { coinBalance } = useCoins();
   const { user } = useAuth();
   const [idx, setIdx] = useState(0);
-  const [autoPlay, setAutoPlay] = useState(false);
   const [commentTasks, setCommentTasks] = useState([]);
   const [drawerVisible, setDrawerVisible] = useState(false);
-
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const stored = await AsyncStorage.getItem('autoplay_enabled');
-        if (stored !== null) setAutoPlay(stored === 'true');
-      } catch (e) {
-        console.error("Failed to load autoplay state", e);
-      }
-    })();
-  }, []);
-
-  const handleToggleAutoPlay = async (val) => {
-    setAutoPlay(val);
-    try {
-      await AsyncStorage.setItem('autoplay_enabled', String(val));
-    } catch (e) {
-      console.error("Failed to save autoplay state", e);
-    }
-  };
 
   // Re-read the shared store every time this tab gains focus
   useFocusEffect(
@@ -77,7 +55,7 @@ export default function CommentScreen({ navigation }) {
   const task = commentTasks[idx % Math.max(commentTasks.length, 1)];
 
   const handleSeeAnother = () => setIdx((i) => i + 1);
-  const handleComment = () => navigation.navigate('TaskDetail', { task, taskType: 'comment', autoPlay });
+  const handleComment = () => navigation.navigate('TaskDetail', { task, taskType: 'comment' });
 
   return (
     <View style={{ 
@@ -144,17 +122,7 @@ export default function CommentScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        {/* Toggle — final element, nothing below */}
-        <View style={s.toggleRow}>
-          <Text style={s.toggleIcon}>👑</Text>
-          <Text style={s.toggleLbl}>Automatically play next video</Text>
-          <Switch
-            value={autoPlay}
-            onValueChange={handleToggleAutoPlay}
-            trackColor={{ false: '#D0D0D0', true: '#A0B9FF' }}
-            thumbColor={autoPlay ? '#3366FF' : '#F5F5F5'}
-          />
-        </View>
+
 
       </ScrollView>
       <SidebarDrawer visible={drawerVisible} onClose={() => setDrawerVisible(false)} />
@@ -211,10 +179,5 @@ const s = StyleSheet.create({
   },
   seeAnotherTxt: { fontSize: 15, fontWeight: '600', color: '#FFF' },
 
-  toggleRow: {
-    flexDirection: 'row', alignItems: 'center',
-    marginHorizontal: 16, marginTop: 16,
-  },
-  toggleIcon: { fontSize: 18, marginRight: 8 },
-  toggleLbl: { flex: 1, fontSize: 14, color: '#121212' },
 });
+

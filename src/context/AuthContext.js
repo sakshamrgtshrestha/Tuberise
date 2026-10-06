@@ -38,6 +38,8 @@ export function AuthProvider({ children }) {
       webClientId: '593762761539-otu4g67rjrctmj7i7cae6t0hpsjd66ib.apps.googleusercontent.com',
       offlineAccess: true,
       scopes: [
+        'profile',
+        'email',
         'https://www.googleapis.com/auth/youtube.readonly',
         'https://www.googleapis.com/auth/youtube.force-ssl',
       ],
@@ -89,12 +91,29 @@ export function AuthProvider({ children }) {
       console.log('Raw Google Sign-In response:', JSON.stringify(response));
       console.log('User details extracted:', JSON.stringify(userDetails));
 
+      // ── Resolve the user's own YouTube channelId at sign-in time ───────────
+      // This is cached so comment/like/subscribe verification can match by
+      // authorChannelId instead of fragile display-name comparison.
+      let ytChannelId = null;
+      try {
+        const chRes = await fetch(
+          'https://www.googleapis.com/youtube/v3/channels?part=id&mine=true',
+          { headers: { Authorization: `Bearer ${tokens.accessToken}` } },
+        );
+        const chJson = await chRes.json();
+        ytChannelId = chJson?.items?.[0]?.id ?? null;
+        console.log('[AuthContext] YouTube channelId resolved:', ytChannelId, '(status', chRes.status + ')');
+      } catch (chErr) {
+        console.warn('[AuthContext] Could not resolve YouTube channelId at sign-in:', chErr?.message);
+      }
+
       const userData = {
         id: userDetails.id,
         email: userDetails.email,
         displayName: userDetails.name || userDetails.displayName,
         photoURL: userDetails.photo || userDetails.photoURL,
         accessToken: tokens.accessToken,
+        ytChannelId,          // may be null if the API call failed
       };
 
       // ── Debug: log email and admin check ──────────────────────────────────

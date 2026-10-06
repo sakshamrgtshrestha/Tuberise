@@ -3,8 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-nati
 
 const { width, height } = Dimensions.get('window');
 
-export default function AutoplayCountdown({ coinsEarned, onCountdownEnd, onSkip, onStop }) {
-  const [timeLeft, setTimeLeft] = useState(10);
+export default function AutoplayCountdown({ coinsEarned, onCountdownEnd, onSkip, onStop, duration = 10 }) {
+  const [timeLeft, setTimeLeft] = useState(duration);
 
   useEffect(() => {
     if (timeLeft === 0) {
