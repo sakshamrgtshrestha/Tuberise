@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  Dimensions, StatusBar
+  Dimensions, StatusBar, ActivityIndicator
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -629,6 +629,7 @@ export default function YouTubeWebView({
 
   const [muted,           setMuted]           = useState(true);
   const [barHeight,       setBarHeight]       = useState(0);
+  const [isVerifying,     setIsVerifying]     = useState(false);
 
   const timerStartedAtRef = useRef(null);
 
@@ -722,7 +723,6 @@ export default function YouTubeWebView({
       // ── ACTION_COMPLETED ──────────────────────────────────────────────────
       if (data.type === 'ACTION_COMPLETED') {
         setActionCompleted(true);
-        showToast('Detected - tap Return to verify', 4000);
       }
 
       // ── LIKE_DEBUG ────────────────────────────────────────────────────────
@@ -828,24 +828,16 @@ useEffect(() => {
 
 const progressPct = dur === 0 ? 100 : ((dur - secondsLeft) / dur) * 100;
 
-// FIX 2: Descriptive status badge labels (before and after action)
-const statusBadgeBefore = {
-  like:      '👍 Like the video',
-  subscribe: '🔔 Subscribe to channel',
-  comment:   '💬 Write a comment',
-}[actionType] ?? '';
-const statusBadgeAfter = {
-  like:      'Detected - tap Return to verify',
-  subscribe: 'Detected - tap Return to verify',
-  comment:   'Detected - tap Return to verify',
-}[actionType] ?? '';
-
-// FIX 1: Action-specific toast message when gray button is tapped
-const incompleteToast = {
-  like:      'Please like the video first',
-  subscribe: 'Please subscribe to the channel first',
-  comment:   'Please write and submit a comment first',
-}[actionType] ?? 'Please complete the action first';
+const handleReturnPress = async () => {
+  setIsVerifying(true);
+  await onReturnToApp({
+    success: true,
+    actionVerified: actionCompleted,
+    webViewVideoId: latestWebViewVideoIdRef.current,
+    timerStartedAt: timerStartedAtRef.current
+  });
+  setIsVerifying(false);
+};
 
 const autoplayScript = `
     (function() {
@@ -856,15 +848,6 @@ const autoplayScript = `
       }
     })();
   `;
-
-// FIX 3: Comment banner — shows immediately on timer end, hides once comment detected
-const commentBanner = timerDone && actionType === 'comment' && !actionCompleted ? (
-  <View style={s.commentBanner} pointerEvents="none">
-    <Text style={s.commentBannerTxt}>
-      ✍️ Write a comment below and tap submit to earn coins
-    </Text>
-  </View>
-) : null;
 
 // [Session] Logout WebView REMOVED — was clearing cookies on every task mount.
 // Cookies are now preserved across tasks. Clearing only happens when:
@@ -998,57 +981,35 @@ return (
           <TouchableOpacity onPress={() => onReturnToApp({ success: false })} style={s.backBtn}>
             <Text style={s.backBtnTxt}>✕</Text>
           </TouchableOpacity>
-
-          {/* FIX 3: Comment instruction banner — shows until comment detected */}
-          {commentBanner}
         </>
       )}
     </View>
 
-    {/* Post-timer return pill (Root level, so bottom: barHeight + 8 works relative to screen bottom) */}
-    {timerDone && (
-      <>
-        {/* FIX 4: Watch task — green Return button immediately, no action badge */}
-        {actionType === 'watch' ? (
-          <View style={[s.returnPill, { bottom: barHeight + 8 }]} pointerEvents="box-none">
-            <TouchableOpacity
-              style={[s.returnBtn, s.returnBtnActive]}
-              onPress={() => onReturnToApp({ success: true, actionVerified: true, webViewVideoId: latestWebViewVideoIdRef.current, timerStartedAt: timerStartedAtRef.current })}
-            >
-              <Text style={s.returnBtnTxt}>Return to App</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={[s.returnPill, { bottom: barHeight + 8 }]} pointerEvents="box-none">
-            {/* FIX 2: Descriptive status badge */}
-            <View style={[s.statusBadge, actionCompleted && s.statusBadgeDone]}>
-              <Text style={s.statusBadgeTxt}>
-                {actionCompleted ? statusBadgeAfter : statusBadgeBefore}
-              </Text>
-            </View>
-            {/* FIX 1: Gray button with action-specific toast / green when done */}
-            <TouchableOpacity
-              style={[s.returnBtn, actionCompleted ? s.returnBtnActive : s.returnBtnGray]}
-              onPress={() => {
-                if (actionCompleted) {
-                  onReturnToApp({ success: true, actionVerified: true, webViewVideoId: latestWebViewVideoIdRef.current, timerStartedAt: timerStartedAtRef.current });
-                } else {
-                  showToast(incompleteToast, 4000);
-                }
-              }}
-            >
-              <Text style={s.returnBtnTxt}>Return to App</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </>
-    )}
-
-    {/* Bottom Bar UI */}
-    <View 
-      style={[s.bottomBar, { paddingBottom: insets.bottom }]}
-      onLayout={(e) => setBarHeight(e.nativeEvent.layout.height)}
-    >
+    {/* Post-timer UI Panel */}
+    {timerDone ? (
+      <View style={[s.postTimerPanel, { paddingBottom: insets.bottom + 12 }]}>
+        <Text style={s.postTimerText} numberOfLines={1} adjustsFontSizeToFit>
+          {actionType === 'like' && "Please like the video and return to App."}
+          {actionType === 'comment' && "Please comment on the video and return to the app."}
+          {actionType === 'subscribe' && "Please subscribe to the video and return to the app."}
+        </Text>
+        <TouchableOpacity
+          style={s.postTimerBtn}
+          onPress={handleReturnPress}
+          disabled={isVerifying}
+        >
+          {isVerifying ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={s.postTimerBtnTxt}>Return to App</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    ) : (
+      <View 
+        style={[s.bottomBar, { paddingBottom: insets.bottom }]}
+        onLayout={(e) => setBarHeight(e.nativeEvent.layout.height)}
+      >
         {/* Left — Coins */}
         <View style={s.bottomCol}>
           <View style={s.circleBtn}>
@@ -1092,10 +1053,11 @@ return (
           </View>
         </View>
       </View>
+    )}
 
-      <ToastPill message={toastMessage} visible={toastVisible} />
-    </View>
-  );
+    <ToastPill message={toastMessage} visible={toastVisible} />
+  </View>
+);
 }
 
 const s = StyleSheet.create({
@@ -1186,25 +1148,34 @@ const s = StyleSheet.create({
   },
 
   // ── Post-timer return pill ─────────────────────────────────────────────────
-  returnPill: {
-    position: 'absolute', right: 16,
-    zIndex: 1001, alignItems: 'flex-end', gap: 8,
+  // ── Post-timer UI Panel ──────────────────────────────────────────────────
+  postTimerPanel: {
+    backgroundColor: '#F2F2F2',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.08)',
+    width: '100%',
+    paddingTop: 12,
+    paddingHorizontal: 16,
   },
-  statusBadge: {
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+  postTimerText: {
+    fontSize: 18,
+    color: '#121212',
+    textAlign: 'center',
+    marginBottom: 10,
   },
-  statusBadgeDone: { backgroundColor: 'rgba(16,185,129,0.9)' },
-  statusBadgeTxt: { color: '#FFF', fontSize: 12, fontWeight: '700' },
-  returnBtn: {
-    paddingHorizontal: 18, paddingVertical: 12,
-    borderRadius: 24, elevation: 8,
-    shadowColor: '#000', shadowOpacity: 0.25,
-    shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
+  postTimerBtn: {
+    height: 56,
+    borderRadius: 6,
+    backgroundColor: '#0D47A1',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
   },
-  returnBtnActive: { backgroundColor: '#10B981' },
-  returnBtnGray: { backgroundColor: '#6B7280' },
-  returnBtnTxt: { color: '#FFF', fontWeight: '800', fontSize: 14 },
+  postTimerBtnTxt: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
 
   // ── Sign-in banner (only shown after all retries fail) ────────────────────
   ytLoginBanner: {
