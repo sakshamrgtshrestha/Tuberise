@@ -1,4 +1,4 @@
-import { db } from '../config/firebase';
+import { db, waitForAuth } from '../config/firebase';
 import { 
   doc, setDoc, getDoc, collection, 
   query, where, getDocs 
@@ -10,6 +10,7 @@ const COMPLETED_COLLECTION = 'completedTasks';
 export const markTaskCompleted = async (userEmail, campaignId, action) => {
   if (!userEmail || !campaignId || !action) return;
   try {
+    await waitForAuth();
     const docId = `${userEmail}_${campaignId}_${action}`;
     const ref = doc(db, COMPLETED_COLLECTION, docId);
     await setDoc(ref, {
@@ -27,6 +28,7 @@ export const markTaskCompleted = async (userEmail, campaignId, action) => {
 export const hasCompletedTask = async (userEmail, campaignId, action) => {
   if (!userEmail || !campaignId || !action) return false;
   try {
+    await waitForAuth();
     const docId = `${userEmail}_${campaignId}_${action}`;
     const ref = doc(db, COMPLETED_COLLECTION, docId);
     const snap = await getDoc(ref);
@@ -40,6 +42,7 @@ export const hasCompletedTask = async (userEmail, campaignId, action) => {
 export const getCompletedCampaignIds = async (userEmail) => {
   if (!userEmail) return [];
   try {
+    await waitForAuth();
     const q = query(
       collection(db, COMPLETED_COLLECTION),
       where('userEmail', '==', userEmail)
@@ -55,6 +58,7 @@ export const getCompletedCampaignIds = async (userEmail) => {
 export const markTimerCompleted = async (userEmail, campaignId) => {
   if (!userEmail || !campaignId) return;
   try {
+    await waitForAuth();
     const docId = `timer_${userEmail}_${campaignId}`;
     const ref = doc(db, 'timerMemory', docId);
     await setDoc(ref, {
@@ -71,6 +75,7 @@ export const markTimerCompleted = async (userEmail, campaignId) => {
 export const hasCompletedTimer = async (userEmail, campaignId) => {
   if (!userEmail || !campaignId) return false;
   try {
+    await waitForAuth();
     const docId = `timer_${userEmail}_${campaignId}`;
     const ref = doc(db, 'timerMemory', docId);
     const snap = await getDoc(ref);

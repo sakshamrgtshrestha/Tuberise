@@ -1,4 +1,4 @@
-import { db } from '../config/firebase';
+import { db, waitForAuth } from '../config/firebase';
 import { 
   collection, 
   doc, 
@@ -20,6 +20,7 @@ const generateUserId = () => {
 
 export const createOrUpdateUser = async (userInfo) => {
   try {
+    await waitForAuth();
     const userRef = doc(db, USERS_COLLECTION, userInfo.email);
     const userSnap = await getDoc(userRef);
 
@@ -67,6 +68,7 @@ export const createOrUpdateUser = async (userInfo) => {
 
 export const getUserData = async (email) => {
   try {
+    await waitForAuth();
     const userRef = doc(db, USERS_COLLECTION, email);
     const userSnap = await getDoc(userRef);
     if (userSnap.exists()) {
@@ -81,6 +83,7 @@ export const getUserData = async (email) => {
 
 export const updateCoins = async (email, amount) => {
   try {
+    await waitForAuth();
     const userRef = doc(db, USERS_COLLECTION, email);
     await updateDoc(userRef, {
       coins: increment(amount)
@@ -93,6 +96,7 @@ export const updateCoins = async (email, amount) => {
 
 export const banUser = async (email) => {
   try {
+    await waitForAuth();
     const userRef = doc(db, USERS_COLLECTION, email);
     await updateDoc(userRef, {
       isBanned: true
@@ -105,6 +109,7 @@ export const banUser = async (email) => {
 
 export const unbanUser = async (email) => {
   try {
+    await waitForAuth();
     const userRef = doc(db, USERS_COLLECTION, email);
     await updateDoc(userRef, {
       isBanned: false
@@ -117,6 +122,7 @@ export const unbanUser = async (email) => {
 
 export const getAllUsers = async () => {
   try {
+    await waitForAuth();
     const querySnapshot = await getDocs(collection(db, USERS_COLLECTION));
     const users = [];
     querySnapshot.forEach((doc) => {

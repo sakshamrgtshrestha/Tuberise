@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, StatusBar, Alert, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, StatusBar, Alert, ActivityIndicator, Text, TouchableOpacity, Platform, ToastAndroid } from 'react-native';
 import { Colors } from '../theme/colors';
 import YouTubeWebView from '../components/YouTubeWebView';
+import ToastPill from '../components/ToastPill';
 import { useCoins } from '../context/CoinContext';
 import { updateCampaignProgress, getActiveCampaignsForFeed } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
@@ -73,6 +74,21 @@ export default function TaskDetailScreen({ route, navigation }) {
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(initialAutoPlay || false);
   const [showAutoplayOverlay, setShowAutoplayOverlay] = useState(false);
   const [appHandle, setAppHandle] = useState(null); // @handle from YouTube channels API
+  const [toastMessage, setToastMessage] = useState(''); // iOS coins toast
+  const toastTimerRef = useRef(null);
+
+  // ── Show a "You have got N coins" toast ───────────────────────────────────
+  // Android: native ToastAndroid. iOS: ToastPill component with auto-dismiss.
+  const showCoinsToast = (coins) => {
+    const msg = `You have got ${coins} coins 🎊🎉`;
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
+    } else {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      setToastMessage(msg);
+      toastTimerRef.current = setTimeout(() => setToastMessage(''), 2200);
+    }
+  };
 
   // Fetch the app user's YouTube @handle once so we can compare with the WebView identity.
   // Always uses getFreshAccessToken() — never the stale cached token.
@@ -125,6 +141,7 @@ export default function TaskDetailScreen({ route, navigation }) {
 
   const grantRewards = async () => {
     await addCoins(task.coinsReward, `${taskType} reward`);
+    showCoinsToast(task.coinsReward); // "You have got N coins 🎊🎉"
     try {
       await updateCampaignProgress(task.id);
       await markTaskCompleted(user.email, task.id, taskType);
@@ -147,6 +164,7 @@ export default function TaskDetailScreen({ route, navigation }) {
     // Watch type: give coins immediately
     if (taskType === 'watch') {
       await addCoins(task.coinsReward, `${taskType} reward`);
+      showCoinsToast(task.coinsReward); // "You have got N coins 🎊🎉"
       await updateCampaignProgress(task.id);
       await markTaskCompleted(user.email, task.id, taskType);
       
@@ -817,6 +835,9 @@ export default function TaskDetailScreen({ route, navigation }) {
           </View>
         </View>
       )}
+
+      {/* iOS coins toast — rendered last so it appears on top */}
+      <ToastPill message={toastMessage} visible={!!toastMessage} />
 
       {showAutoplayOverlay && (
         <AutoplayCountdown

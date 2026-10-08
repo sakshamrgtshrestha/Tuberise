@@ -16,6 +16,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useCoins } from '../context/CoinContext';
 import { useAuth } from '../context/AuthContext';
 import { createCampaign, hasActiveCampaignForVideoAndType } from '../services/campaignService';
+import WheelPickerModal from '../components/WheelPickerModal';
 
 // ── Pricing config — edit costPerUnit here to change prices ──────────────────
 const PRICING_CONFIG = {
@@ -25,13 +26,28 @@ const PRICING_CONFIG = {
   comment:   { costPerUnit: 135, label: 'Comments',    iconName: 'chat-bubble'         },
 };
 
-// ── Duration options (seconds) ────────────────────────────────────────────────
+// ── Count picker values per task type ────────────────────────────────────────
+const COUNT_VALUES = {
+  watch:     [25, 50, 100, 150, 200, 250, 300, 350, 400, 450, 500,
+              550, 600, 650, 700, 750, 800, 850, 900, 950, 1000],
+  subscribe: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+  like:      [10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+  comment:   [10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+};
+
+const COUNT_PICKER_META = {
+  watch:     { title: 'View Count',       subtitle: 'Select the number of views you want to earn.'        },
+  subscribe: { title: 'Subscriber Count', subtitle: 'Select the number of subscribers you want to earn.' },
+  like:      { title: 'Like Count',       subtitle: 'Select the number of likes you want to earn.'        },
+  comment:   { title: 'Comment Count',    subtitle: 'Select the number of comments you want to earn.'     },
+};
+
+// ── Duration options (seconds) and multipliers ────────────────────────────────
 const DURATION_OPTIONS = [
   60, 90, 120, 150, 180, 210, 240, 270, 300,
   330, 360, 420, 450, 480, 510, 540, 570, 600,
 ];
 
-// ── Duration multipliers ───────────────────────────────────────────────────────
 const DURATION_MULTIPLIERS = {
   60:  1.0,
   90:  1.2,
@@ -97,52 +113,16 @@ function WarningBox() {
   );
 }
 
-// ── Duration Dropdown ─────────────────────────────────────────────────────────
-function DurationDropdown({ selected, onSelect }) {
-  const [open, setOpen] = React.useState(false);
-  const multiplier = DURATION_MULTIPLIERS[selected] ?? 1.0;
+// ── Picker Field — tappable input-like box that opens a picker ────────────────
+function PickerField({ label, value, onPress, icon }) {
   return (
-    <View style={s.dropdownWrapper}>
-      <TouchableOpacity
-        style={s.dropdownTrigger}
-        onPress={() => setOpen((v) => !v)}
-        activeOpacity={0.8}
-      >
-        <MaterialIcons name="timer" size={18} color="#6B7280" style={{ marginRight: 8 }} />
-        <Text style={s.dropdownTriggerTxt}>
-          {selected}s{'  '}
-          <Text style={s.dropdownMultiplierInline}>×{multiplier.toFixed(1)}</Text>
-        </Text>
-        <MaterialIcons
-          name={open ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
-          size={22}
-          color="#6B7280"
-        />
-      </TouchableOpacity>
-      {open && (
-        <View style={s.dropdownList}>
-          {DURATION_OPTIONS.map((opt) => {
-            const mult = DURATION_MULTIPLIERS[opt] ?? 1.0;
-            const isSelected = opt === selected;
-            return (
-              <TouchableOpacity
-                key={opt}
-                style={[s.dropdownItem, isSelected && s.dropdownItemActive]}
-                onPress={() => { onSelect(opt); setOpen(false); }}
-                activeOpacity={0.75}
-              >
-                <Text style={[s.dropdownItemLabel, isSelected && s.dropdownItemLabelActive]}>
-                  {opt}s
-                </Text>
-                <Text style={[s.dropdownItemMult, isSelected && s.dropdownItemLabelActive]}>
-                  ×{mult.toFixed(1)}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+    <TouchableOpacity style={s.pickerField} onPress={onPress} activeOpacity={0.8}>
+      {icon && (
+        <MaterialIcons name={icon} size={18} color="#6B7280" style={{ marginRight: 8 }} />
       )}
-    </View>
+      <Text style={s.pickerFieldTxt}>{value}</Text>
+      <MaterialIcons name="keyboard-arrow-down" size={22} color="#6B7280" />
+    </TouchableOpacity>
   );
 }
 
@@ -155,8 +135,13 @@ export default function CampaignCreationScreen({ navigation }) {
   // Form state
   const [taskType,      setTaskType]      = useState('watch');
   const [videoUrl,      setVideoUrl]      = useState('');
-  const [quantity,      setQuantity]      = useState('10');
+  // quantity is now always a number from the picker list
+  const [quantity,      setQuantity]      = useState(COUNT_VALUES.watch[0]);
   const [watchDuration, setWatchDuration] = useState(60); // number (seconds)
+
+  // Picker modal visibility
+  const [showCountPicker,    setShowCountPicker]    = useState(false);
+  const [showDurationPicker, setShowDurationPicker] = useState(false);
 
   // Fetch state
   const [videoMeta,      setVideoMeta]      = useState(null);
@@ -167,17 +152,22 @@ export default function CampaignCreationScreen({ navigation }) {
   const [duplicateError, setDuplicateError] = useState('');
   const [checkingDup,    setCheckingDup]    = useState(false);
 
+  // ── When taskType changes, reset quantity to first value of that type ──────
+  useEffect(() => {
+    setQuantity(COUNT_VALUES[taskType][0]);
+  }, [taskType]);
+
   // ── Derived ────────────────────────────────────────────────────────────────
   const videoId    = extractVideoId(videoUrl.trim());
   const isValidUrl = !!videoId;
-  const qty        = Math.max(0, parseInt(quantity, 10) || 0);
+  const qty        = quantity; // already a number from the picker
   const durSecs    = watchDuration; // already a number
   const config     = PRICING_CONFIG[taskType];
   const multiplier = DURATION_MULTIPLIERS[durSecs] ?? 1.0;
   const totalCost  = Math.round(config.costPerUnit * qty * multiplier);
   const canAfford  = coinBalance >= totalCost;
   const videoOk    = !!videoMeta && !metaError;
-  const canSubmit  = isValidUrl && videoOk && qty > 0 && qty <= 10000
+  const canSubmit  = isValidUrl && videoOk && qty > 0
                      && canAfford && totalCost > 0
                      && !duplicateError;
 
@@ -295,9 +285,9 @@ export default function CampaignCreationScreen({ navigation }) {
           videoUrl,
           videoId,
           type:             taskType,           // 'watch' | 'subscribe' | 'like' | 'comment'
-          totalRequired:    qty,
+          totalRequired:    Number(qty),        // plain number
           coinsReward:      coinsRewardPerTask,
-          watchTimeRequired: durSecs,            // saved for ALL task types
+          watchTimeRequired: Number(durSecs),   // plain number, saved for ALL task types
           channelName:      videoMeta?.channelName || 'My Channel',
           totalCost,
         });
@@ -323,9 +313,36 @@ export default function CampaignCreationScreen({ navigation }) {
     setMetaError('');
   };
 
+  // ── Duration display label (shown on the field) ───────────────────────────
+  const durationLabel = `${durSecs}s ×${(DURATION_MULTIPLIERS[durSecs] ?? 1.0).toFixed(1)}`;
+  const countMeta     = COUNT_PICKER_META[taskType];
+
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" backgroundColor={RED} />
+
+      {/* ── Count Picker Modal ──────────────────────────────────────────────── */}
+      <WheelPickerModal
+        visible={showCountPicker}
+        title={countMeta.title}
+        subtitle={countMeta.subtitle}
+        values={COUNT_VALUES[taskType]}
+        selectedValue={quantity}
+        onSelect={(val) => { setQuantity(val); setShowCountPicker(false); }}
+        onCancel={() => setShowCountPicker(false)}
+      />
+
+      {/* ── Duration Picker Modal ───────────────────────────────────────────── */}
+      <WheelPickerModal
+        visible={showDurationPicker}
+        title="Video Duration"
+        subtitle="Set the watch time for the video."
+        values={DURATION_OPTIONS}
+        selectedValue={watchDuration}
+        formatLabel={(v) => `${v}s`}
+        onSelect={(val) => { setWatchDuration(val); setShowDurationPicker(false); }}
+        onCancel={() => setShowDurationPicker(false)}
+      />
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <View style={s.header}>
@@ -450,30 +467,20 @@ export default function CampaignCreationScreen({ navigation }) {
           </View>
         ) : null}
 
-        {/* ── 4. Quantity Input ────────────────────────────────────────────── */}
+        {/* ── 4. Count Picker ──────────────────────────────────────────────── */}
         <Text style={s.sectionLabel}>Number of {config.label}</Text>
-        <View style={s.numRow}>
-          <TextInput
-            style={s.numInput}
-            value={quantity}
-            onChangeText={(v) => setQuantity(v.replace(/[^0-9]/g, ''))}
-            keyboardType="numeric"
-            placeholder="10"
-            placeholderTextColor="#9CA3AF"
-          />
-          <Text style={s.numUnit}>{config.label}</Text>
-        </View>
-        {qty > 10000 ? (
-          <Text style={s.errorTxt}>Maximum 10,000 per campaign</Text>
-        ) : qty === 0 && quantity !== '' ? (
-          <Text style={s.errorTxt}>Quantity must be at least 1</Text>
-        ) : null}
+        <PickerField
+          value={`${quantity} ${config.label}`}
+          icon="format-list-numbered"
+          onPress={() => setShowCountPicker(true)}
+        />
 
-        {/* ── 5. Time Required dropdown (ALL task types) ───────────────────── */}
+        {/* ── 5. Duration Picker ───────────────────────────────────────────── */}
         <Text style={s.sectionLabel}>Time Required (Sec)</Text>
-        <DurationDropdown
-          selected={watchDuration}
-          onSelect={setWatchDuration}
+        <PickerField
+          value={durationLabel}
+          icon="timer"
+          onPress={() => setShowDurationPicker(true)}
         />
 
         {/* ── 6. Total Cost Display ────────────────────────────────────────── */}
@@ -519,8 +526,6 @@ export default function CampaignCreationScreen({ navigation }) {
             {(isValidUrl && !videoMeta && !fetchingMeta && !metaError) ? '• Tap "Fetch Video Info" to verify the video\n' : ''}
             {metaError ? `• ${metaError}\n` : ''}
             {duplicateError ? '• You already have an active campaign for this video + type\n' : ''}
-            {qty === 0 ? '• Enter a quantity\n' : ''}
-            {qty > 10000 ? '• Quantity exceeds maximum (10,000)\n' : ''}
             {(!canAfford && totalCost > 0) ? `• Need ${(totalCost - coinBalance).toLocaleString()} more coins` : ''}
           </Text>
         )}
@@ -610,40 +615,13 @@ const s = StyleSheet.create({
   typeTxt:       { fontSize: 13, fontWeight: '600', color: '#000000', marginTop: 6 },
   typeTxtActive: { color: '#FFFFFF' },
 
-  /* Duration Dropdown */
-  dropdownWrapper: { position: 'relative', zIndex: 10 },
-  dropdownTrigger: {
+  /* Picker Field (tappable input-like box) */
+  pickerField: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#FFF', borderRadius: 12, borderWidth: 1.5,
     borderColor: '#E5E7EB', paddingHorizontal: 14, height: 50,
   },
-  dropdownTriggerTxt: { flex: 1, fontSize: 16, fontWeight: '700', color: '#121212' },
-  dropdownMultiplierInline: { fontSize: 13, fontWeight: '500', color: RED },
-  dropdownList: {
-    position: 'absolute', top: 54, left: 0, right: 0,
-    backgroundColor: '#FFF', borderRadius: 12, borderWidth: 1.5,
-    borderColor: '#E5E7EB', shadowColor: '#000', shadowOpacity: 0.12,
-    shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 8,
-    maxHeight: 240, zIndex: 100,
-  },
-  dropdownItem: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 16, paddingVertical: 11,
-    borderBottomWidth: 1, borderBottomColor: '#F3F4F6',
-  },
-  dropdownItemActive:      { backgroundColor: '#FFF0F0' },
-  dropdownItemLabel:       { fontSize: 15, fontWeight: '600', color: '#374151' },
-  dropdownItemLabelActive: { color: RED, fontWeight: '700' },
-  dropdownItemMult:        { fontSize: 13, color: '#9CA3AF', fontWeight: '500' },
-
-  /* Quantity / Duration Input */
-  numRow: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: '#FFF', borderRadius: 12, borderWidth: 1.5,
-    borderColor: '#E5E7EB', paddingHorizontal: 14, height: 50,
-  },
-  numInput: { flex: 1, fontSize: 18, fontWeight: '700', color: '#121212' },
-  numUnit:  { fontSize: 13, color: '#9CA3AF', fontWeight: '500' },
+  pickerFieldTxt: { flex: 1, fontSize: 16, fontWeight: '700', color: '#121212' },
 
   /* Cost Card */
   costCard: {

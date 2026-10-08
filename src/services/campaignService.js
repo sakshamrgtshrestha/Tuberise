@@ -1,4 +1,4 @@
-import { db } from '../config/firebase';
+import { db, waitForAuth } from '../config/firebase';
 import { 
   collection, 
   addDoc, 
@@ -18,6 +18,7 @@ const CAMPAIGNS_COLLECTION = 'campaigns';
 
 export const createCampaign = async (campaignData) => {
   try {
+    await waitForAuth();
     const docRef = await addDoc(collection(db, CAMPAIGNS_COLLECTION), {
       userEmail: campaignData.userEmail,
       videoUrl: campaignData.videoUrl,
@@ -41,6 +42,7 @@ export const createCampaign = async (campaignData) => {
 
 export const getUserCampaigns = async (email) => {
   try {
+    await waitForAuth();
     const campaignsQuery = query(
       collection(db, CAMPAIGNS_COLLECTION),
       where('userEmail', '==', email)
@@ -66,6 +68,7 @@ export const getUserCampaigns = async (email) => {
 
 export const getAllCampaigns = async () => {
   try {
+    await waitForAuth();
     const campaignsQuery = query(
       collection(db, CAMPAIGNS_COLLECTION),
       orderBy('createdAt', 'desc')
@@ -84,6 +87,7 @@ export const getAllCampaigns = async () => {
 
 export const deleteCampaign = async (campaignId) => {
   try {
+    await waitForAuth();
     const campaignRef = doc(db, CAMPAIGNS_COLLECTION, campaignId);
     await deleteDoc(campaignRef);
   } catch (error) {
@@ -94,6 +98,7 @@ export const deleteCampaign = async (campaignId) => {
 
 export const getActiveCampaignsForFeed = async (currentUserEmail, completedCampaignIds = []) => {
   try {
+    await waitForAuth();
     const campaignsQuery = query(
       collection(db, CAMPAIGNS_COLLECTION),
       where('status', '==', 'active')
@@ -123,6 +128,7 @@ export const getActiveCampaignsForFeed = async (currentUserEmail, completedCampa
 
 export const updateCampaignProgress = async (campaignId) => {
   try {
+    await waitForAuth();
     const campaignRef = doc(db, CAMPAIGNS_COLLECTION, campaignId);
     const campaignSnap = await getDoc(campaignRef);
     
@@ -147,6 +153,7 @@ export const updateCampaignProgress = async (campaignId) => {
 // exact videoId + type combination.  Used in CampaignCreationScreen.
 export const hasActiveCampaignForVideoAndType = async (userEmail, videoId, type) => {
   try {
+    await waitForAuth();
     const q = query(
       collection(db, CAMPAIGNS_COLLECTION),
       where('userEmail', '==', userEmail),

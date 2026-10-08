@@ -14,6 +14,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { useAuth } from './AuthContext';
 import { getUserData, updateCoins } from '../services/userService';
 
+import { waitForAuth } from '../config/firebase';
+
 const CoinContext = createContext(null);
 
 export function CoinProvider({ children }) {
@@ -31,6 +33,7 @@ export function CoinProvider({ children }) {
     }
     try {
       setLoadingCoins(true);
+      await waitForAuth();
       const data = await getUserData(user.email);
       if (data && typeof data.coins === 'number') {
         setCoinBalance(data.coins);

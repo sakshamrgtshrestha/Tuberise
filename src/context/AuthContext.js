@@ -17,6 +17,8 @@ import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import { createOrUpdateUser } from '../services/userService';
+import { auth } from '../config/firebase';
+import { GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut } from 'firebase/auth';
 
 const ADMIN_CREDENTIALS = { username: 'admin', password: 'tuberise2024' };
 const ADMIN_EMAIL = 'sakchhyam10@gmail.com';
@@ -35,7 +37,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     // Must run before any GoogleSignin call — including signOut in the restore path
     GoogleSignin.configure({
-      webClientId: '593762761539-otu4g67rjrctmj7i7cae6t0hpsjd66ib.apps.googleusercontent.com',
+      webClientId: '1090230987883-3u1jh9tesaq2iv6k6v9es42q8cs6enk5.apps.googleusercontent.com',
       offlineAccess: true,
       scopes: [
         'profile',
@@ -56,6 +58,19 @@ export function AuthProvider({ children }) {
             parsed.isAdmin = true;
             console.log('[AuthContext] Restored session — admin email detected, role corrected.');
           }
+
+          try {
+            await GoogleSignin.signInSilently();
+            const tokens = await GoogleSignin.getTokens();
+            if (tokens.idToken) {
+              const credential = GoogleAuthProvider.credential(tokens.idToken);
+              const fbUserCred = await signInWithCredential(auth, credential);
+              console.log(`[FirebaseAuth] signed in as ${fbUserCred.user.email} uid ${fbUserCred.user.uid}`);
+            }
+          } catch (fbErr) {
+            console.warn('Failed Firebase silent sign in:', fbErr);
+          }
+
           setUser(parsed);
         }
       } catch (e) {
@@ -84,6 +99,12 @@ export function AuthProvider({ children }) {
       await GoogleSignin.hasPlayServices();
       const response = await GoogleSignin.signIn();
       const tokens = await GoogleSignin.getTokens();
+
+      if (tokens.idToken) {
+        const credential = GoogleAuthProvider.credential(tokens.idToken);
+        const fbUserCred = await signInWithCredential(auth, credential);
+        console.log(`[FirebaseAuth] signed in as ${fbUserCred.user.email} uid ${fbUserCred.user.uid}`);
+      }
 
       // v16 returns data inside response.data
       const userDetails = response.data?.user || response.user || response;
@@ -188,6 +209,10 @@ export function AuthProvider({ children }) {
     // Sign out of Google session
     try { await GoogleSignin.signOut(); } catch (e) {
       console.warn('GoogleSignin.signOut failed (ignored):', e);
+    }
+    // Sign out of Firebase Auth
+    try { await firebaseSignOut(auth); } catch (e) {
+      console.warn('firebase signOut failed:', e);
     }
     // Wipe all persisted app data
     try {
