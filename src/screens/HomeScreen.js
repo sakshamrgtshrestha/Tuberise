@@ -83,7 +83,7 @@ export default function HomeScreen({ navigation }) {
   const task = watchTasks[idx % Math.max(watchTasks.length, 1)];
 
   const handleSeeAnother = () => setIdx((i) => i + 1);
-  const handleWatch = () => navigation.navigate('TaskDetail', { task, taskType: 'watch', autoPlay });
+  const handleWatch = () => navigation.navigate('TaskDetail', { task, taskType: 'watch', autoPlay, consecutiveAutoplays: 0 });
 
   return (
     <View style={{ 

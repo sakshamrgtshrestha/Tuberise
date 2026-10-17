@@ -45,9 +45,11 @@ const showSessionExpiredAlert = (navigation) => {
 };
 
 export default function TaskDetailScreen({ route, navigation }) {
-  const { task, taskType, autoPlay: initialAutoPlay } = route.params;
+  const { task, taskType, autoPlay: initialAutoPlay, consecutiveAutoplays: initConsecutive = 0 } = route.params;
   const { addCoins } = useCoins();
   const { user } = useAuth();
+  
+  const [consecutiveAutoplays, setConsecutiveAutoplays] = useState(initConsecutive);
 
   // Always fetch a fresh OAuth token before any YouTube API call.
   // Returns the access token string, or null if the Google session has expired.
@@ -73,6 +75,7 @@ export default function TaskDetailScreen({ route, navigation }) {
   const [reducedTimer, setReducedTimer] = useState(false);
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(initialAutoPlay || false);
   const [showAutoplayOverlay, setShowAutoplayOverlay] = useState(false);
+  const [showStillWatchingPrompt, setShowStillWatchingPrompt] = useState(false);
   const [appHandle, setAppHandle] = useState(null); // @handle from YouTube channels API
   const [toastMessage, setToastMessage] = useState(''); // iOS coins toast
   const toastTimerRef = useRef(null);
@@ -168,8 +171,12 @@ export default function TaskDetailScreen({ route, navigation }) {
       await updateCampaignProgress(task.id);
       await markTaskCompleted(user.email, task.id, taskType);
       
-      if (autoPlayEnabled) {
-        setShowAutoplayOverlay(true);
+      if (autoPlayEnabled && taskType === 'watch') {
+        if (consecutiveAutoplays >= 3) {
+          setShowStillWatchingPrompt(true);
+        } else {
+          setShowAutoplayOverlay(true);
+        }
       } else {
         navigation.navigate('MainTabs', { screen: targetTab });
       }
@@ -783,7 +790,7 @@ export default function TaskDetailScreen({ route, navigation }) {
       
       if (filteredTasks.length > 0) {
         // Load the next task by replacing the current screen
-        navigation.replace('TaskDetail', { task: filteredTasks[0], taskType, autoPlay: autoPlayEnabled });
+        navigation.replace('TaskDetail', { task: filteredTasks[0], taskType, autoPlay: autoPlayEnabled, consecutiveAutoplays: consecutiveAutoplays + 1 });
       } else {
         Alert.alert("No Tasks", "No more tasks available right now. Check back later!");
         setTimeout(() => {
@@ -839,7 +846,7 @@ export default function TaskDetailScreen({ route, navigation }) {
       {/* iOS coins toast — rendered last so it appears on top */}
       <ToastPill message={toastMessage} visible={!!toastMessage} />
 
-      {showAutoplayOverlay && (
+      {showAutoplayOverlay && !showStillWatchingPrompt && (
         <AutoplayCountdown
           coinsEarned={task.coinsReward}
           onCountdownEnd={handleLoadNextTask}
@@ -847,6 +854,22 @@ export default function TaskDetailScreen({ route, navigation }) {
           onStop={handleStopAutoplay}
           duration={20}
         />
+      )}
+
+      {showStillWatchingPrompt && (
+        <View style={styles.stillWatchingOverlay}>
+          <Text style={styles.stillWatchingTitle}>Are you still watching?</Text>
+          <TouchableOpacity 
+            style={styles.stillWatchingBtn} 
+            onPress={() => {
+              setShowStillWatchingPrompt(false);
+              setConsecutiveAutoplays(0);
+              setShowAutoplayOverlay(true);
+            }}
+          >
+            <Text style={styles.stillWatchingBtnTxt}>Yes, continue</Text>
+          </TouchableOpacity>
+        </View>
       )}
     </View>
   );
@@ -876,5 +899,22 @@ const styles = StyleSheet.create({
   verifyingSub: {
     fontSize: 14,
     color: '#666',
+  },
+  stillWatchingOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 10000,
+  },
+  stillWatchingTitle: {
+    color: '#FFF', fontSize: 28, fontWeight: 'bold',
+    marginBottom: 40, textAlign: 'center'
+  },
+  stillWatchingBtn: {
+    backgroundColor: '#3366FF', paddingVertical: 16, paddingHorizontal: 48,
+    borderRadius: 30
+  },
+  stillWatchingBtnTxt: {
+    color: '#FFF', fontSize: 20, fontWeight: 'bold'
   }
 });

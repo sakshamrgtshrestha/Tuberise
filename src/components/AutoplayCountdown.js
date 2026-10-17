@@ -1,21 +1,43 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, AppState } from 'react-native';
 
 const { width, height } = Dimensions.get('window');
 
 export default function AutoplayCountdown({ coinsEarned, onCountdownEnd, onSkip, onStop, duration = 10 }) {
   const [timeLeft, setTimeLeft] = useState(duration);
+  const appState = useRef(AppState.currentState);
+  const [isActive, setIsActive] = useState(true);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+        setIsActive(true);
+      } else if (nextAppState.match(/inactive|background/)) {
+        setIsActive(false);
+      }
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (timeLeft === 0) {
-      onCountdownEnd();
+      if (isActive) onCountdownEnd();
       return;
     }
-    const timerId = setInterval(() => {
-      setTimeLeft(prev => prev - 1);
-    }, 1000);
-    return () => clearInterval(timerId);
-  }, [timeLeft, onCountdownEnd]);
+    let timerId = null;
+    if (isActive) {
+      timerId = setInterval(() => {
+        setTimeLeft(prev => prev - 1);
+      }, 1000);
+    }
+    return () => {
+      if (timerId) clearInterval(timerId);
+    };
+  }, [timeLeft, onCountdownEnd, isActive]);
 
   return (
     <View style={styles.overlay}>

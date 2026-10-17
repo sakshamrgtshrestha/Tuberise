@@ -437,148 +437,6 @@ const buildCommentDetectionScript = (taskVideoId) => `
   true;
 `;
 
-const AUTO_LIKE_SCRIPT = `
-  (function() {
-    console.log('[Auto-Action] Triggering Like...');
-    var likeBtn = document.querySelector('button[aria-label*="like this video"]') || document.querySelector('button[aria-label*="Like"]');
-    if (!likeBtn) {
-      console.log('[Auto-Action] Like button not found.');
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'AUTO_ACTION_FAILED', action: 'LIKE' }));
-      return;
-    }
-    if (likeBtn.getAttribute('aria-pressed') !== 'true') {
-      likeBtn.click();
-    }
-    console.log('[Auto-Action] Like Triggered');
-    setTimeout(function() {
-      window.ReactNativeWebView.postMessage(JSON.stringify({
-        type: 'AUTO_ACTION_COMPLETED', action: 'LIKE'
-      }));
-    }, 1500);
-  })();
-  true;
-`;
-
-const AUTO_SUBSCRIBE_SCRIPT = `
-  (function() {
-    console.log('[Auto-Action] Triggering Subscribe...');
-    var alreadySubscribed = !!(
-      document.querySelector('button[aria-label*="Unsubscribe"]') ||
-      document.querySelector('[subscribed]')
-    );
-    var subBtn = document.querySelector('yt-subscribe-button-view-model button') || document.querySelector('button[aria-label*="Subscribe"]');
-    if (!subBtn && !alreadySubscribed) {
-      console.log('[Auto-Action] Subscribe button not found and not subscribed.');
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'AUTO_ACTION_FAILED', action: 'SUBSCRIBE' }));
-      return;
-    }
-    if (subBtn && !alreadySubscribed) {
-      subBtn.click();
-    }
-    console.log('[Auto-Action] Subscribe Triggered');
-    setTimeout(function() {
-      window.ReactNativeWebView.postMessage(JSON.stringify({
-        type: 'AUTO_ACTION_COMPLETED', action: 'SUBSCRIBE'
-      }));
-    }, 1500);
-  })();
-  true;
-`;
-
-const AUTO_COMMENT_SCRIPT = `
-  (function() {
-    console.log('[Auto-Comment] Initializing...');
-    var submitted = false;
-
-    // Step 1: Find the Input
-    var input = document.querySelector('[contenteditable="true"]') || 
-                document.querySelector('.comment-simplebox-text') || 
-                document.querySelector('textarea') ||
-                document.querySelector('#placeholder-area');
-                
-    if (!input) {
-      console.log('[Auto-Comment] Error: Comment input not found.');
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'AUTO_ACTION_FAILED', action: 'COMMENT' }));
-      return;
-    }
-    console.log('[Auto-Comment] Input Found');
-
-    // Step 2: Focus & Click
-    input.focus();
-    input.click();
-    
-    // Short delay to let UI react to focus before typing
-    setTimeout(function() {
-      // Step 3: Simulated Typing
-      var text = "😊👍🔥";
-      var success = document.execCommand('insertText', false, text);
-      if (!success) {
-         // Fallback if execCommand fails on certain mobile environments
-         if (typeof input.value !== 'undefined') {
-             input.value = text;
-         } else {
-             input.textContent = text;
-         }
-      }
-      console.log('[Auto-Comment] Text Injected');
-
-      // Step 4: Event Dispatching
-      // Explicitly dispatch events to ensure YouTube's React/Lit state detects the change
-      var inputEvent = new Event('input', { bubbles: true, cancelable: true });
-      var changeEvent = new Event('change', { bubbles: true, cancelable: true });
-      var keydownEvent = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', keyCode: 13 });
-      
-      input.dispatchEvent(keydownEvent);
-      input.dispatchEvent(inputEvent);
-      input.dispatchEvent(changeEvent);
-      
-      // Step 5: The Delay (simulate human reading)
-      var humanDelay = Math.floor(Math.random() * 500) + 1000; // 1000ms - 1500ms
-      setTimeout(function() {
-        // Step 6: Find & Click Submit
-        var submitBtn = document.querySelector('#submit-button button') || 
-                        document.querySelector('button[aria-label="Comment"]') || 
-                        document.querySelector('yt-button-shape[id*="submit"] button') ||
-                        document.querySelector('#submit-button');
-                        
-        if (submitBtn) {
-          // Check visibility and enabled status
-          var isVisible = submitBtn.offsetWidth > 0 || submitBtn.offsetHeight > 0 || submitBtn.getClientRects().length > 0;
-          var isDisabled = submitBtn.disabled || submitBtn.getAttribute('aria-disabled') === 'true';
-          
-          if (isVisible && !isDisabled) {
-              submitBtn.click();
-              submitted = true;
-              console.log('[Auto-Comment] Submit Clicked');
-          } else {
-              console.log('[Auto-Comment] Error: Submit button found but is hidden or disabled.');
-              // Fallback dispatch click in case standard click fails
-              submitBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-              submitted = true;
-          }
-        } else {
-          console.log('[Auto-Comment] Error: Submit button not found.');
-        }
-
-        // Step 7: Final Handshake
-        setTimeout(function() {
-          console.log('[Auto-Comment] Sequence Complete');
-          if (submitted) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'AUTO_ACTION_COMPLETED', action: 'COMMENT'
-            }));
-          } else {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'AUTO_ACTION_FAILED', action: 'COMMENT'
-            }));
-          }
-        }, 1500);
-
-      }, humanDelay);
-    }, 500); // 500ms after focus
-  })();
-  true;
-`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -597,7 +455,6 @@ export default function YouTubeWebView({
   const webViewRef      = useRef(null);
   const completedRef    = useRef(false);
   const toastTimerRef   = useRef(null);
-  const autoFallbackRef = useRef(null);
 
   const taskVideoUrlMatch = task.videoUrl?.match(
     /(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/
@@ -630,6 +487,9 @@ export default function YouTubeWebView({
   const [muted,           setMuted]           = useState(true);
   const [barHeight,       setBarHeight]       = useState(0);
   const [isVerifying,     setIsVerifying]     = useState(false);
+  const [onGoogleLogin,   setOnGoogleLogin]   = useState(false);  // WebView is on accounts.google.com (sign-in / account fix)
+  const redirectGuardRef = useRef(0);      // last time we forced the page back to the task video
+  const returnLockRef    = useRef(false);  // blocks double taps on Return to App
 
   const timerStartedAtRef = useRef(null);
 
@@ -725,10 +585,7 @@ export default function YouTubeWebView({
         setActionCompleted(true);
       }
 
-      // ── LIKE_DEBUG ────────────────────────────────────────────────────────
-      if (data.type === 'LIKE_DEBUG') {
-        console.log(`[LikeDebug] href: ${data.href} | selector: ${data.selector}`);
-      }
+
 
       // ── WRONG_VIDEO ───────────────────────────────────────────────────────
       if (data.type === 'WRONG_VIDEO') {
@@ -737,17 +594,6 @@ export default function YouTubeWebView({
           showToast('Please stay on the task video', 4000);
           webViewRef.current?.goBack();
         }
-      }
-
-      // ── AUTO_ACTION_COMPLETED ─────────────────────────────────────────────
-      if (data.type === 'AUTO_ACTION_COMPLETED') {
-        onReturnToApp({ success: true, actionVerified: true });
-      }
-
-      // ── AUTO_ACTION_FAILED ────────────────────────────────────────────────
-      if (data.type === 'AUTO_ACTION_FAILED') {
-        setTimerDone(true);
-        showToast('Auto-action failed. Please do it manually, then tap Return to App.', 4000);
       }
 
       // ── MUTE_STATE ────────────────────────────────────────────────────────
@@ -762,14 +608,14 @@ const handleTimerComplete = () => {
   if (completedRef.current) return;
   completedRef.current = true;
   if (actionType === 'watch') {
-    onReturnToApp({ success: true, webViewVideoId: latestWebViewVideoIdRef.current, timerStartedAt: timerStartedAtRef.current });
-    return;
-  }
-  if (autoPlayEnabled && (actionType === 'like' || actionType === 'subscribe' || actionType === 'comment')) {
-    if (actionType === 'like') webViewRef.current?.injectJavaScript(AUTO_LIKE_SCRIPT);
-    else if (actionType === 'subscribe') webViewRef.current?.injectJavaScript(AUTO_SUBSCRIBE_SCRIPT);
-    else if (actionType === 'comment') webViewRef.current?.injectJavaScript(AUTO_COMMENT_SCRIPT);
-    autoFallbackRef.current = setTimeout(() => setTimerDone(true), 10000);
+    if (autoPlayEnabled) {
+      // Autoplay ON: keep the screen frozen. The parent awards the coins and
+      // AutoplayCountdown loads the next task by itself.
+      onReturnToApp({ success: true, webViewVideoId: latestWebViewVideoIdRef.current, timerStartedAt: timerStartedAtRef.current });
+      return;
+    }
+    // Autoplay OFF: unlock the screen and let the user tap "Return to App".
+    setTimerDone(true);
     return;
   }
   // FIX 1: Setting timerDone = true removes the RN overlay — no UNLOCK_SCRIPT needed
@@ -793,7 +639,6 @@ useEffect(() => {
 
 useEffect(() => {
   return () => {
-    if (autoFallbackRef.current) clearTimeout(autoFallbackRef.current);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   };
 }, []);
@@ -829,14 +674,20 @@ useEffect(() => {
 const progressPct = dur === 0 ? 100 : ((dur - secondsLeft) / dur) * 100;
 
 const handleReturnPress = async () => {
+  if (returnLockRef.current) return;   // ignore double taps
+  returnLockRef.current = true;
   setIsVerifying(true);
-  await onReturnToApp({
-    success: true,
-    actionVerified: actionCompleted,
-    webViewVideoId: latestWebViewVideoIdRef.current,
-    timerStartedAt: timerStartedAtRef.current
-  });
-  setIsVerifying(false);
+  try {
+    await onReturnToApp({
+      success: true,
+      actionVerified: actionCompleted,
+      webViewVideoId: latestWebViewVideoIdRef.current,
+      timerStartedAt: timerStartedAtRef.current
+    });
+  } finally {
+    setIsVerifying(false);
+    returnLockRef.current = false;
+  }
 };
 
 const autoplayScript = `
@@ -848,6 +699,19 @@ const autoplayScript = `
       }
     })();
   `;
+
+const taskStartUrl = task.videoUrl + (task.videoUrl.includes('?') ? '&' : '?') + 'autoplay=1';
+
+const forceBackToTaskVideo = () => {
+  const now = Date.now();
+  if (now - redirectGuardRef.current < 1500) return;   // avoid redirect loops
+  redirectGuardRef.current = now;
+  console.log('[Nav] left the task video - returning to it');
+  showToast('Please stay on the task video', 3000);
+  webViewRef.current?.injectJavaScript(
+    `window.location.replace(${JSON.stringify(taskStartUrl)}); true;`
+  );
+};
 
 // [Session] Logout WebView REMOVED — was clearing cookies on every task mount.
 // Cookies are now preserved across tasks. Clearing only happens when:
@@ -877,8 +741,20 @@ return (
         mixedContentMode="always"
         onMessage={handleWebViewMessage}
         onLoadEnd={() => webViewRef.current?.injectJavaScript(autoplayScript)}
+        onShouldStartLoadWithRequest={(req) => {
+          // View tasks while the timer runs: refuse full-page loads of any OTHER video.
+          if (actionType !== 'watch' || timerDone) return true;
+          if (req.isTopFrame === false) return true;
+          const m = (req.url || '').match(/(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/);
+          if (m && taskVideoId && m[1] !== taskVideoId) {
+            console.log('[Nav] blocked load of another video:', req.url);
+            return false;
+          }
+          return true;
+        }}
         onNavigationStateChange={(navState) => {
           const url = navState.url;
+          setOnGoogleLogin(!!url && url.includes('accounts.google.com'));
           const match = url?.match(/(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/);
           const navVideoId = match ? match[1] : null;
           
@@ -906,7 +782,11 @@ return (
           if (navVideoId) latestWebViewVideoIdRef.current = navVideoId;
 
           if (navVideoId && taskVideoId && navVideoId !== taskVideoId) {
-            if (actionType !== 'watch' && actionType !== 'subscribe') {
+            if (actionType === 'watch') {
+              // View: while the timer runs, never stay on another video
+              // (YouTube autoplay-next, suggested videos, shorts...).
+              if (!timerDone) forceBackToTaskVideo();
+            } else if (actionType !== 'subscribe') {
               showToast('Please stay on the task video', 4000);
               webViewRef.current?.goBack();
             }
@@ -916,7 +796,7 @@ return (
 
       {/* FIX 1: React Native touch blocker — replaces LOCK_SCRIPT / UNLOCK_SCRIPT */}
       {/* Visible only while timer is running. Disappears automatically when timerDone=true. */}
-      {!timerDone && timerStarted && (
+      {!timerDone && (timerStarted || (actionType === 'watch' && !onGoogleLogin)) && (
         <View
           style={s.rnTouchBlocker}
           pointerEvents="box-only"
@@ -992,6 +872,7 @@ return (
           {actionType === 'like' && "Please like the video and return to App."}
           {actionType === 'comment' && "Please comment on the video and return to the app."}
           {actionType === 'subscribe' && "Please subscribe to the video and return to the app."}
+          {actionType === 'watch' && "Timer complete. Tap Return to App to collect your coins."}
         </Text>
         <TouchableOpacity
           style={s.postTimerBtn}
@@ -1273,7 +1154,3 @@ const s = StyleSheet.create({
     fontSize: 15,
   },
 });
-
-
-
-

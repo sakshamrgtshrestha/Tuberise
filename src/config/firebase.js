@@ -23,17 +23,31 @@ try {
 }
 export { auth };
 
+let authPromise = null;
+
 export const waitForAuth = () => {
-  return new Promise((resolve) => {
+  if (authPromise) return authPromise;
+
+  authPromise = new Promise((resolve) => {
     if (auth.currentUser) {
       resolve(auth.currentUser);
       return;
     }
+
+    const timeout = setTimeout(() => {
+      console.warn('[FirebaseAuth] waitForAuth timed out after 5s. Proceeding without Firebase Auth.');
+      if (typeof unsubscribe === 'function') unsubscribe();
+      resolve(null);
+    }, 5000);
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
+        clearTimeout(timeout);
         unsubscribe();
         resolve(user);
       }
     });
   });
+
+  return authPromise;
 };

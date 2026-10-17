@@ -36,8 +36,10 @@ export function AuthProvider({ children }) {
   // ── On mount: configure Google Sign-In + restore saved session ─────────────
   useEffect(() => {
     // Must run before any GoogleSignin call — including signOut in the restore path
+    const clientId = '593762761539-otu4g67rjrctmj7i7cae6t0hpsjd66ib.apps.googleusercontent.com';
+    console.log(`[FirebaseAuth] Configuring GoogleSignin with webClientId: ${clientId.substring(0, 12)}...`);
     GoogleSignin.configure({
-      webClientId: '1090230987883-3u1jh9tesaq2iv6k6v9es42q8cs6enk5.apps.googleusercontent.com',
+      webClientId: clientId,
       offlineAccess: true,
       scopes: [
         'profile',
@@ -60,15 +62,16 @@ export function AuthProvider({ children }) {
           }
 
           try {
-            await GoogleSignin.signInSilently();
             const tokens = await GoogleSignin.getTokens();
             if (tokens.idToken) {
               const credential = GoogleAuthProvider.credential(tokens.idToken);
               const fbUserCred = await signInWithCredential(auth, credential);
               console.log(`[FirebaseAuth] signed in as ${fbUserCred.user.email} uid ${fbUserCred.user.uid}`);
+            } else {
+              console.log('[FirebaseAuth] idToken is empty. webClientId is probably missing from GoogleSignin.configure.');
             }
           } catch (fbErr) {
-            console.warn('Failed Firebase silent sign in:', fbErr);
+            console.warn(`[FirebaseAuth] Failed Firebase sign in during restore: ${fbErr.code} - ${fbErr.message}`);
           }
 
           setUser(parsed);
@@ -104,6 +107,8 @@ export function AuthProvider({ children }) {
         const credential = GoogleAuthProvider.credential(tokens.idToken);
         const fbUserCred = await signInWithCredential(auth, credential);
         console.log(`[FirebaseAuth] signed in as ${fbUserCred.user.email} uid ${fbUserCred.user.uid}`);
+      } else {
+        console.log('[FirebaseAuth] idToken is empty. webClientId is probably missing from GoogleSignin.configure.');
       }
 
       // v16 returns data inside response.data
