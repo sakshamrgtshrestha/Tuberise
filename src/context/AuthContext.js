@@ -1,15 +1,14 @@
 /**
  * AuthContext — Google Sign-In + session restore
  *
- * signIn()               → real Google OAuth → role auto-detected by ADMIN_EMAIL
- * adminLogin(user, pass) → hardcoded credentials → admin role (kept for fallback)
- * signOut()              → clears both, clears AsyncStorage, signs out Google
+ * signIn()  → Google OAuth → role auto-detected by ADMIN_EMAIL
+ * signOut() → clears AsyncStorage, signs out Google + Firebase
  *
  * Persistence:
  *   On mount: GoogleSignin.configure() runs FIRST, then AsyncStorage session
  *   is restored. Admin status is rechecked on every restore so a stale
  *   role stored from a previous session is always corrected.
- *   On signIn/adminLogin, saves user to AsyncStorage.
+ *   On signIn, saves user to AsyncStorage (without access token).
  *   On signOut, clears AsyncStorage so next app open shows LoginScreen.
  */
 import React, { createContext, useContext, useState, useEffect } from 'react';
@@ -20,7 +19,7 @@ import { createOrUpdateUser } from '../services/userService';
 import { auth } from '../config/firebase';
 import { GoogleAuthProvider, signInWithCredential, signOut as firebaseSignOut } from 'firebase/auth';
 
-const ADMIN_CREDENTIALS = { username: 'admin', password: 'tuberise2024' };
+
 const ADMIN_EMAIL = 'sakchhyam10@gmail.com';
 const USER_STORAGE_KEY = '@tuberise_user';
 
@@ -114,8 +113,7 @@ export function AuthProvider({ children }) {
       // v16 returns data inside response.data
       const userDetails = response.data?.user || response.user || response;
       
-      console.log('Raw Google Sign-In response:', JSON.stringify(response));
-      console.log('User details extracted:', JSON.stringify(userDetails));
+
 
       // ── Resolve the user's own YouTube channelId at sign-in time ───────────
       // This is cached so comment/like/subscribe verification can match by
@@ -138,7 +136,7 @@ export function AuthProvider({ children }) {
         email: userDetails.email,
         displayName: userDetails.name || userDetails.displayName,
         photoURL: userDetails.photo || userDetails.photoURL,
-        accessToken: tokens.accessToken,
+        // accessToken is intentionally NOT stored — call GoogleSignin.getTokens() when needed
         ytChannelId,          // may be null if the API call failed
       };
 
@@ -146,7 +144,11 @@ export function AuthProvider({ children }) {
       console.log('User email:', userData.email);
       console.log('Is admin email:', userData.email === ADMIN_EMAIL);
 
-      const dbUser = await createOrUpdateUser(userData);
+      const dbUser = await createOrUpdateUser({
+        ...userData,
+        name: userDetails.name,
+        photo: userDetails.photo,
+      });
 
       if (dbUser.isBanned) {
         Alert.alert('Account Banned', 'Your account has been banned. Please contact support.');
@@ -180,30 +182,7 @@ export function AuthProvider({ children }) {
     }
   };
 
-  /**
-   * Admin login with hardcoded credentials.
-   * Returns true on success, false on failure.
-   */
-  const adminLogin = async (username, password) => {
-    setAuthError('');
-    if (
-      username.trim() === ADMIN_CREDENTIALS.username &&
-      password === ADMIN_CREDENTIALS.password
-    ) {
-      const adminUser = {
-        id: 'admin_001',
-        displayName: 'Administrator',
-        email: 'admin@tuberise.app',
-        role: 'admin',
-        coinBalance: 0,
-      };
-      setUser(adminUser);
-      await persistUser(adminUser);
-      return true;
-    }
-    setAuthError('Invalid username or password.');
-    return false;
-  };
+
 
   // ── Sign out ───────────────────────────────────────────────────────────────
   const signOut = async () => {
@@ -235,7 +214,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, authError, isAdmin, initializing, signIn, adminLogin, signOut }}
+      value={{ user, loading, authError, isAdmin, initializing, signIn, signOut }}
     >
       {children}
     </AuthContext.Provider>

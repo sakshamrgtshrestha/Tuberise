@@ -17,6 +17,7 @@ import { useCoins } from '../context/CoinContext';
 import { useAuth } from '../context/AuthContext';
 import { createCampaign, hasActiveCampaignForVideoAndType } from '../services/campaignService';
 import WheelPickerModal from '../components/WheelPickerModal';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 
 // ── Pricing config — edit costPerUnit here to change prices ──────────────────
 const PRICING_CONFIG = {
@@ -69,7 +70,7 @@ const DURATION_MULTIPLIERS = {
   600: 5.5,
 };
 
-const YOUTUBE_API_KEY = 'AIzaSyDSA7JUtKvAsOJ8rWLozvI2HISw8T3lA7o';
+// API key removed — YouTube API calls use OAuth Bearer token from GoogleSignin.getTokens()
 const RED = '#E02020';
 
 // ── Utility: extract YouTube video ID from various URL formats ────────────────
@@ -196,8 +197,23 @@ export default function CampaignCreationScreen({ navigation }) {
     setMetaError('');
     setVideoMeta(null);
     try {
+      // Obtain a fresh OAuth token — never use a cached/persisted token
+      let accessToken;
+      try {
+        const tokens = await GoogleSignin.getTokens();
+        accessToken = tokens?.accessToken ?? null;
+      } catch (tokenErr) {
+        console.warn('[CampaignCreation] Could not get access token:', tokenErr?.code);
+      }
+
+      if (!accessToken) {
+        setMetaError("Couldn't verify right now, please try again.");
+        return;
+      }
+
       const res = await fetch(
-        `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${YOUTUBE_API_KEY}`
+        `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       const data = await res.json();
 
@@ -206,7 +222,7 @@ export default function CampaignCreationScreen({ navigation }) {
         return;
       }
 
-      const item        = data.items[0];
+      const item         = data.items[0];
       const durationSecs = parseISO8601Duration(item.contentDetails?.duration || 'PT0S');
 
       if (durationSecs < 60) {

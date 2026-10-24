@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { getActiveCampaignsForFeed } from '../services/campaignService';
 import { getCompletedCampaignIds } from '../services/completedTasksService';
 import SidebarDrawer from '../components/SidebarDrawer';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 
 
 const { width: SW } = Dimensions.get('window');
@@ -60,25 +61,43 @@ export default function SubscribeScreen({ navigation }) {
   useEffect(() => {
     const currentTask = tasks[idx % Math.max(tasks.length, 1)];
     if (!currentTask?.videoId) return;
-    
+
     setChannelPhoto(null); // reset while loading
-    
-    const YOUTUBE_API_KEY = 'AIzaSyDSA7JUtKvAsOJ8rWLozvI2HISw8T3lA7o';
-    
-    fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${currentTask.videoId}&key=${YOUTUBE_API_KEY}`)
-      .then(r => r.json())
-      .then(data => {
-        const channelId = data.items?.[0]?.snippet?.channelId;
-        if (!channelId) return;
-        return fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet&id=${channelId}&key=${YOUTUBE_API_KEY}`);
-      })
-      .then(r => r?.json())
-      .then(chData => {
+
+    let cancelled = false;
+    (async () => {
+      let token;
+      try {
+        const tokens = await GoogleSignin.getTokens();
+        token = tokens?.accessToken ?? null;
+      } catch (e) {
+        console.log('Channel photo: could not get token', e);
+        return;
+      }
+      if (!token || cancelled) return;
+
+      try {
+        const vRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${currentTask.videoId}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        const vData = await vRes.json();
+        const channelId = vData.items?.[0]?.snippet?.channelId;
+        if (!channelId || cancelled) return;
+
+        const cRes = await fetch(
+          `https://www.googleapis.com/youtube/v3/channels?part=snippet&id=${channelId}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        const chData = await cRes.json();
         const url = chData?.items?.[0]?.snippet?.thumbnails?.medium?.url;
-        if (url) setChannelPhoto(url);
-      })
-      .catch(e => console.log('Channel photo error:', e));
-      
+        if (url && !cancelled) setChannelPhoto(url);
+      } catch (e) {
+        console.log('Channel photo error:', e);
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [tasks, idx]);
 
   const handleSeeAnother = () => {

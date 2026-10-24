@@ -19,6 +19,16 @@ import { GoogleSignin } from '@react-native-google-signin/google-signin';
 const SIMULATE_EXPIRED_TOKEN = false;
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Shared helper: extract an 11-character YouTube video ID from any
+// standard URL format (watch?v=, youtu.be/, /shorts/, /embed/).
+// Returns null if no match — callers must fail-closed on null.
+const extractVideoId = (url) => {
+  const m = url?.match(
+    /(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/,
+  );
+  return m?.[1] ?? null;
+};
+
 // Map task type → correct tab name defined in AppNavigator.js
 const TASK_TAB_MAP = {
   watch:     'View',
@@ -199,19 +209,18 @@ export default function TaskDetailScreen({ route, navigation }) {
         }
 
         // 2. Extract the video ID from the task URL
-        const videoUrlMatch = task.videoUrl?.match(
-          /(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/,
-        );
-        const videoId = videoUrlMatch?.[1];
+        const videoId = extractVideoId(task.videoUrl);
 
-        console.log('[LikeVerify] task.videoUrl:', task.videoUrl);
         console.log('[LikeVerify] extracted task videoId:', videoId);
         console.log('[LikeVerify] webViewVideoId:', webViewVideoId);
 
         if (!videoId) {
-          console.warn('[LikeVerify] Could not extract video ID from URL, using DOM detection');
-          await grantRewards();
-          navigation.navigate('MainTabs', { screen: targetTab });
+          console.warn('[LikeVerify] Could not extract video ID from URL — failing closed');
+          Alert.alert(
+            'Couldn\'t Verify Right Now',
+            'There was a problem reaching YouTube. Please try again.',
+            [{ text: 'Try Again', style: 'cancel' }],
+          );
           return;
         }
 
@@ -278,7 +287,6 @@ export default function TaskDetailScreen({ route, navigation }) {
           }
 
           const json = await response.json();
-          console.log('[LikeVerify] response body:', JSON.stringify(json));
           
           if (json?.error) {
             console.warn('[LikeVerify] API error body:', JSON.stringify(json.error));
@@ -354,33 +362,36 @@ export default function TaskDetailScreen({ route, navigation }) {
           return;
         }
 
-        // 2. Extract video ID from the task URL
-        const videoUrlMatch = task.videoUrl?.match(
-          /(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/,
-        );
-        const videoId = videoUrlMatch?.[1];
+        // 2. Extract video ID from the task URL (Shorts-aware)
+        const videoId = extractVideoId(task.videoUrl);
 
         if (!videoId) {
-          // Can't determine video ID — fall back to DOM detection
-          console.warn('Could not extract video ID from URL, using DOM detection for subscribe');
-          await grantRewards();
-          navigation.navigate('MainTabs', { screen: targetTab });
+          // Can't determine video ID — fail closed
+          console.warn('[SubVerify] Could not extract video ID from URL — failing closed');
+          Alert.alert(
+            'Couldn\'t Verify Right Now',
+            'There was a problem reaching YouTube. Please try again.',
+            [{ text: 'Try Again', style: 'cancel' }],
+          );
           return;
         }
 
-        // 3. Get the channel ID from the video
-        const YOUTUBE_API_KEY = 'AIzaSyDSA7JUtKvAsOJ8rWLozvI2HISw8T3lA7o';
+        // 3. Get the channel ID from the video using the signed-in user's access token
         const videoRes = await fetch(
-          `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${YOUTUBE_API_KEY}`,
+          `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
         );
         const videoJson = await videoRes.json();
         const channelId = videoJson?.items?.[0]?.snippet?.channelId;
 
         if (!channelId) {
-          // Can't resolve channelId — trust DOM detection
-          console.warn('Could not resolve channelId, trusting DOM detection for subscribe');
-          await grantRewards();
-          navigation.navigate('MainTabs', { screen: targetTab });
+          // Can't resolve channelId — fail closed
+          console.warn('[SubVerify] Could not resolve channelId — failing closed');
+          Alert.alert(
+            'Couldn\'t Verify Right Now',
+            'There was a problem reaching YouTube. Please try again.',
+            [{ text: 'Try Again', style: 'cancel' }],
+          );
           return;
         }
 
@@ -527,20 +538,18 @@ export default function TaskDetailScreen({ route, navigation }) {
 
         // ── 2. Video ID extraction ────────────────────────────────────────────
         // Handles watch?v=, youtu.be/, /shorts/, and m.youtube.com/?v=
-        const videoUrlMatch = task.videoUrl?.match(
-          /(?:v=|youtu\.be\/|\/shorts\/|\/embed\/)([A-Za-z0-9_-]{11})/,
-        );
-        const videoId = videoUrlMatch?.[1];
+        const videoId = extractVideoId(task.videoUrl);
 
-        // ── TEMP DIAG 2 ───────────────────────────────────────────────────────
-        console.log('[CommentVerify] task.videoUrl:', task.videoUrl);
         console.log('[CommentVerify] extracted task videoId:', videoId);
         console.log('[CommentVerify] webViewVideoId:', webViewVideoId);
 
         if (!videoId) {
-          console.warn('[CommentVerify] Could not extract video ID, trusting DOM detection for comment');
-          await grantRewards();
-          navigation.navigate('MainTabs', { screen: targetTab });
+          console.warn('[CommentVerify] Could not extract video ID from URL — failing closed');
+          Alert.alert(
+            'Couldn\'t Verify Right Now',
+            'There was a problem reaching YouTube. Please try again.',
+            [{ text: 'Try Again', style: 'cancel' }],
+          );
           return;
         }
 
@@ -655,18 +664,8 @@ export default function TaskDetailScreen({ route, navigation }) {
               break;
             }
 
-            // ── TEMP DIAG 5 ────────────────────────────────────────────────
             const items = commentJson?.items ?? [];
             console.log(`[CommentVerify] page ${page + 1}: ${items.length} items, nextPageToken:`, commentJson?.nextPageToken ?? 'none');
-            if (page === 0 && attempt === 1) {
-              const first5 = items.slice(0, 5).map(item => ({
-                authorChannelId: item?.snippet?.topLevelComment?.snippet?.authorChannelId?.value,
-                authorDisplayName: item?.snippet?.topLevelComment?.snippet?.authorDisplayName,
-                publishedAt: item?.snippet?.topLevelComment?.snippet?.publishedAt,
-                text: (item?.snippet?.topLevelComment?.snippet?.textOriginal ?? '').slice(0, 60),
-              }));
-              console.log('[CommentVerify] first 5 items (attempt 1, page 1):', JSON.stringify(first5, null, 2));
-            }
 
             // Match: authorChannelId === myChannelId AND publishedAt >= timerFinishedAt
             for (const item of items) {

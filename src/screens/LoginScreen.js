@@ -16,7 +16,7 @@ const { width: SW } = Dimensions.get('window');
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { signIn, /*adminLogin,*/ loading, authError } = useAuth();
+  const { signIn, loading, authError } = useAuth();
 
   // ── Admin form state (commented out — admin now uses Google Sign-In) ──
   // const [showAdminForm, setShowAdminForm] = useState(false);
@@ -158,46 +158,6 @@ const s = StyleSheet.create({
   gLogoTxt: { color: '#FFFFFF', fontWeight: '900', fontSize: 14 },
   googleBtnTxt: { fontSize: 15, fontWeight: '700', color: '#374151' },
   signInHint: { fontSize: 12, color: '#9CA3AF', marginTop: 10 },
-
-  /* Admin form */
-  adminForm: {
-    backgroundColor: '#F9FAFB', borderRadius: 16,
-    padding: 18, width: '100%', marginBottom: 20,
-    borderWidth: 1, borderColor: '#E5E7EB',
-  },
-  adminFormHeader: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 14,
-  },
-  adminFormTitle: { fontSize: 14, fontWeight: '700', color: '#374151' },
-  adminCloseBtn: { fontSize: 18, color: '#9CA3AF', padding: 4 },
-  input: {
-    backgroundColor: '#FFFFFF', borderRadius: 10,
-    borderWidth: 1.5, borderColor: '#E5E7EB',
-    paddingHorizontal: 14, paddingVertical: 13,
-    fontSize: 14, color: '#121212', marginBottom: 12,
-  },
-  passRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  showPassBtn: {
-    padding: 13, backgroundColor: '#FFFFFF',
-    borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB',
-  },
-  showPassTxt: { fontSize: 16 },
-  errorTxt: { color: '#E02020', fontSize: 12, fontWeight: '600', marginBottom: 12, textAlign: 'center' },
-  adminLoginBtn: {
-    backgroundColor: Colors.primary, borderRadius: 12,
-    paddingVertical: 14, alignItems: 'center',
-  },
-  adminLoginBtnTxt: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
-
-  /* Admin link */
-  adminLink: {
-    paddingVertical: 12, paddingHorizontal: 24,
-    borderRadius: 12, borderWidth: 1.5, borderColor: '#E5E7EB',
-    width: '100%', alignItems: 'center', marginBottom: 20,
-    backgroundColor: '#FAFAFA',
-  },
-  adminLinkTxt: { fontSize: 14, fontWeight: '700', color: '#374151' },
 
   terms: {
     fontSize: 11, color: '#9CA3AF', textAlign: 'center', lineHeight: 17,
