@@ -450,6 +450,7 @@ export default function YouTubeWebView({
   appHandle,        // @handle from GET /channels?part=snippet&mine=true (passed by TaskDetailScreen)
   reducedTimer,
   autoPlayEnabled,
+  switchAccountTick, // numeric; increments to trigger account switch from outside
 }) {
   const insets = useSafeAreaInsets();
   const webViewRef      = useRef(null);
@@ -492,6 +493,34 @@ export default function YouTubeWebView({
   const returnLockRef    = useRef(false);  // blocks double taps on Return to App
 
   const timerStartedAtRef = useRef(null);
+
+  // ── Switch-account trigger from TaskDetailScreen ────────────────────────────
+  // When switchAccountTick increments (i.e., user tapped "Switch account" in the
+  // alert), reuse the same logout flow as the identity-mismatch "Fix" button.
+  // A ref guards against firing on the initial render (tick === 0).
+  const switchAccountTickRef = useRef(switchAccountTick);
+  useEffect(() => {
+    // Skip the very first render value
+    if (switchAccountTick === switchAccountTickRef.current) return;
+    switchAccountTickRef.current = switchAccountTick;
+
+    // Build a logout URL whose `continue` leads to Google sign-in
+    // pre-populated with the app email, then back to the task video.
+    const taskUrl = encodeURIComponent(
+      task.videoUrl + (task.videoUrl.includes('?') ? '&' : '?') + 'autoplay=1'
+    );
+    const signInContinue = encodeURIComponent(
+      `https://accounts.google.com/ServiceLogin?service=youtube&Email=${encodeURIComponent(userEmail || '')}&continue=${taskUrl}`
+    );
+    const logoutUrl =
+      `https://accounts.google.com/Logout?continue=${signInContinue}`;
+
+    console.log('[SwitchAccount] tick fired — loading logout URL:', logoutUrl);
+    setFixingAccount(true);
+    webViewRef.current?.injectJavaScript(
+      `window.location.href = ${JSON.stringify(logoutUrl)}; true;`
+    );
+  }, [switchAccountTick]);
 
   // [Session] Log current app email / appHandle on mount so we can trace identity
   useEffect(() => {

@@ -89,6 +89,7 @@ export default function TaskDetailScreen({ route, navigation }) {
   const [appHandle, setAppHandle] = useState(null); // @handle from YouTube channels API
   const [toastMessage, setToastMessage] = useState(''); // iOS coins toast
   const toastTimerRef = useRef(null);
+  const [switchAccountTick, setSwitchAccountTick] = useState(0);
 
   // ── Show a "You have got N coins" toast ───────────────────────────────────
   // Android: native ToastAndroid. iOS: ToastPill component with auto-dismiss.
@@ -321,13 +322,22 @@ export default function TaskDetailScreen({ route, navigation }) {
         }
 
         if (!likeConfirmed) {
-          Alert.alert(
-            'Like Not Detected',
-            actionVerified
-              ? `YouTube shows this action under a different account than ${user?.email}. Tap Fix in the WebView to switch accounts, then try again.`
-              : 'Please like the video first before returning to app.',
-            [{ text: actionVerified ? 'OK' : 'Go Back and Like', style: 'cancel' }],
-          );
+          if (actionVerified) {
+            Alert.alert(
+              'Like Not Detected',
+              `YouTube shows this action under a different account than ${user?.email}. Switch YouTube to ${user?.email} and try again.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Switch account', onPress: () => setSwitchAccountTick(t => t + 1) },
+              ],
+            );
+          } else {
+            Alert.alert(
+              'Like Not Detected',
+              'Please like the video first before returning to app.',
+              [{ text: 'Go Back and Like', style: 'cancel' }],
+            );
+          }
           return;
         }
 
@@ -482,13 +492,22 @@ export default function TaskDetailScreen({ route, navigation }) {
         }
 
         if (!isSubscribed) {
-          Alert.alert(
-            'Not Subscribed',
-            actionVerified
-              ? `YouTube shows this action under a different account than ${user?.email}. Tap Fix in the WebView to switch accounts, then try again.`
-              : 'Please subscribe to the channel first before returning to the app.',
-            [{ text: actionVerified ? 'OK' : 'Go Back and Subscribe', style: 'cancel' }],
-          );
+          if (actionVerified) {
+            Alert.alert(
+              'Not Subscribed',
+              `YouTube shows this action under a different account than ${user?.email}. Switch YouTube to ${user?.email} and try again.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Switch account', onPress: () => setSwitchAccountTick(t => t + 1) },
+              ],
+            );
+          } else {
+            Alert.alert(
+              'Not Subscribed',
+              'Please subscribe to the channel first before returning to the app.',
+              [{ text: 'Go Back and Subscribe', style: 'cancel' }],
+            );
+          }
           return;
         }
 
@@ -736,13 +755,22 @@ export default function TaskDetailScreen({ route, navigation }) {
 
         if (!commentFound) {
           // HTTP 200 was returned but no matching comment was found — genuine miss
-          Alert.alert(
-            'Comment Not Found',
-            actionVerified
-              ? `YouTube shows this action under a different account than ${user?.email}. Tap Fix in the WebView to switch accounts, then try again.`
-              : 'Please submit your comment on the video before returning to the app.',
-            [{ text: actionVerified ? 'OK' : 'Go Back and Comment', style: 'cancel' }],
-          );
+          if (actionVerified) {
+            Alert.alert(
+              'Comment Not Found',
+              `YouTube shows this action under a different account than ${user?.email}. Switch YouTube to ${user?.email} and try again.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Switch account', onPress: () => setSwitchAccountTick(t => t + 1) },
+              ],
+            );
+          } else {
+            Alert.alert(
+              'Comment Not Found',
+              'Please submit your comment on the video before returning to the app.',
+              [{ text: 'Go Back and Comment', style: 'cancel' }],
+            );
+          }
           return;
         }
 
@@ -831,6 +859,7 @@ export default function TaskDetailScreen({ route, navigation }) {
         expectedEmail={user?.email}
         appHandle={appHandle}  // @handle fetched from YouTube channels API
         reducedTimer={reducedTimer}
+        switchAccountTick={switchAccountTick}
       />
       {verifying && (
         <View style={styles.verifyingOverlay}>
